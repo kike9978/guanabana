@@ -1,0 +1,40 @@
+---
+description: Puente product invariants for money, privacy, AI, and sharing
+alwaysApply: true
+---
+
+# Puente product
+
+Source of truth: `docs/PLAN.md`. User-facing copy is Spanish (Mexico). Identifiers, schemas, and code are English.
+
+## Money
+
+- Four layers stay separate: accounts (where money sits), buckets (why), liabilities (owed), events (future).
+- A store on a grocery line is a place, not an account. Line items and price history never change Disponible real.
+- Bank balance is not spendable. Show **Disponible real** from the plan formula.
+- The opening balance is one `unassigned` liquid account (“Saldo sin origen”). Assigning it is a transfer, not income.
+- A credit-card expense does not change the bank balance. It raises card debt and lowers Real Available immediately.
+- Loans are liabilities. Only installments due before the next income reduce Real Available. The rest of the schedule drives the projection until the payoff date. Money lent out counts only once received. Paid installments never change.
+- Income rules key off the 1st and 2nd income event, not the calendar month.
+- Suggestions, imports, and model output never commit. The user confirms the write.
+- Skip and shortfall copy is neutral. Do not scold a negative remainder.
+
+## Records
+
+- Domain rows have `uuid` and `updated_at`.
+- Tag AI-assisted rows `source: ai_manual`. Manual entry stays available.
+- Merge: transactions by `uuid` (newer `updated_at` wins); items and places ask before a name match; buckets and settings always ask; AI jobs and share events append only.
+- Never silently overwrite a balance.
+
+## Privacy
+
+- No backend, accounts, analytics, or stored LLM keys.
+- The app does not call a model. It builds a prompt, the user pastes JSON, the app validates.
+- Share only in a URL fragment (`#s=`), a QR of that payload, or a `.puente` file. Never `?query`.
+- Fragments and QR are snapshots. Full history goes to a file. Refuse oversized links.
+- Payloads omit PANs, account numbers, and full names.
+- Encrypt at rest. Offer a passphrase on export.
+
+## New feature
+
+Before finishing, walk the new-feature checklist in `docs/PLAN.md`. Match an existing phase instead of adding a parallel money path.

@@ -1,0 +1,47 @@
+---
+description: iDroid HUD visual rules for Puente screens
+globs: src/**/*.{tsx,css}
+alwaysApply: false
+---
+
+# iDroid HUD
+
+Puente looks like the MGSV iDroid: cyan hairline panels on navy, dense rows, one dossier. Tokens and screen patterns live in `docs/PLAN.md` § Visual system. Use the CSS variables. Do not add a second palette.
+
+## Patterns — pick one, do not invent
+
+- **Roster** — transactions, bills, import diff, audit.
+- **Grade cards** — the three buckets, and Conservative / Base / Optimistic.
+- **Requirements** — required vs current (savings rule, “can I buy?”, card vs bank).
+- **Dossier + stat bars** — Disponible real breakdown, card detail, scenario result, spend by type.
+- **Series** — expense over time and unit price by date. One cyan line. Amber is the previous window only. Heat marks over-budget, not a category. No rainbow charts and no extra chart palette.
+- **Command bar** — tabs and verbs. Add is a `+` verb, not a shadowed floating button. Estadísticas and Precios are views on Movimientos, not new tabs.
+
+Phone: status strip, stage, command bar. The dossier is a right column when wide and a sheet when narrow.
+
+## Color means one thing
+
+- `--cyan` / `--cyan-bright` — safe, progress, the hero number.
+- `--amber` — tight, locked, warning.
+- `--heat` — shortfall and over-pace bars.
+- `--ink-dim` — the one-line footer hint.
+
+Radius stays `--radius` (2px). No drop shadows, no purple, no large rounded finance cards.
+
+## Type and money
+
+- Labels: 11px uppercase, wide tracking.
+- Amounts and dates: tabular mono, `es-MX`, with `MXN` or `CAD` visible.
+- One hero figure per screen. Inicio’s question is “¿Cuánto tengo de verdad?”.
+
+Styling is plain CSS in `src/App.css` and `src/styles/tokens.css`. Reuse the components in `src/components/hud.tsx` and `fields.tsx` before adding classes.
+
+```tsx
+// ❌ new card chrome
+<div style={{ borderRadius: 16, boxShadow: '0 8px 24px #0004', color: '#10b981' }}>
+
+// ✅ existing HUD pieces
+<Panel title="Tarjetas de crédito">
+  <StatBar label="− Deuda TDC" value={formatMoney(debt, 'MXN')} ratio={debt / scale} />
+</Panel>
+```

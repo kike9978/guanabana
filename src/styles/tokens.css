@@ -1,0 +1,35 @@
+:root {
+  --bg: #07141c;
+  --bg-wash:
+    radial-gradient(120% 80% at 15% 0%, rgba(78, 138, 168, 0.18), transparent 60%),
+    radial-gradient(90% 70% at 100% 100%, rgba(40, 92, 118, 0.18), transparent 65%),
+    repeating-linear-gradient(0deg, rgba(186, 224, 240, 0.025) 0 1px, transparent 1px 3px);
+  --panel: rgba(126, 184, 210, 0.1);
+  --panel-active: rgba(186, 224, 240, 0.18);
+  --line: rgba(186, 224, 240, 0.38);
+  --line-strong: rgba(214, 238, 248, 0.72);
+  --ink: #e7f6fc;
+  --ink-dim: #8fb8c9;
+  --cyan: #7ec8e3;
+  --cyan-bright: #d7f3ff;
+  --amber: #e6c56a;
+  --heat: #e07a45;
+  --radius: 2px;
+
+  --font-ui: 'Roboto Condensed', 'Arial Narrow', 'Helvetica Neue', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --text-label: 11px;
+  --text-section: 13px;
+  --text-row: 15px;
+  --text-hero: 44px;
+  --tracking-label: 0.08em;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  --dossier-width: 340px;
+}

@@ -1,0 +1,183 @@
+import { useState } from 'react'
+import { MOVEMENT_VIEWS, type MovementView } from '../app/navigation'
+import { FooterHint, Panel, Rail } from '../components/hud'
+import { StageHeader } from '../components/StageHeader'
+import { deleteTransaction } from '../db/ledger'
+import type { Transaction } from '../db/types'
+import { useMoneyData, type MoneyData } from '../db/useMoneyData'
+import { isoToDate } from '../lib/dates'
+import { formatDate, formatMoney } from '../lib/format'
+
+type MethodFilter = 'all' | 'bank' | 'cash' | 'credit_card'
+
+const FILTERS: { id: MethodFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'bank', label: 'Banco' },
+  { id: 'cash', label: 'Efectivo' },
+  { id: 'credit_card', label: 'TDC' },
+]
+
+const TYPE_LABEL: Record<Transaction['type'], string> = {
+  income: 'Ingreso',
+  expense: 'Gasto',
+  transfer: 'Transferencia',
+  cc_payment: 'Pago TDC',
+}
+
+const EMPTY_HINT: Record<MovementView, string> = {
+  list: 'Aún no hay movimientos. Usa Agregar para registrar el primero.',
+  stats: 'Las estadísticas aparecen cuando registres gastos.',
+  prices: 'Los precios aparecen cuando agregues productos a un gasto.',
+}
+
+function describe(tx: Transaction, data: MoneyData) {
+  const account = (id: string | null) => data.accounts.find((a) => a.uuid === id)?.name ?? '—'
+  const card = data.cards.find((c) => c.uuid === tx.cc_id)?.name ?? '—'
+  const category = data.categories.find((c) => c.uuid === tx.category_id)?.name
+
+  switch (tx.type) {
+    case 'expense':
+      return {
+        concept: tx.amount < 0 ? `Reembolso · ${category ?? 'Gasto'}` : (category ?? 'Gasto'),
+        source: tx.cc_id ? card : account(tx.account_id),
+        signed: -tx.amount,
+      }
+    case 'income':
+      return { concept: category ?? 'Ingreso', source: account(tx.account_id), signed: tx.amount }
+    case 'transfer':
+      return { concept: 'Transferencia', source: `${account(tx.account_id)} → ${account(tx.to_account_id)}`, signed: 0 }
+    case 'cc_payment':
+      return { concept: `Pago ${card}`, source: account(tx.account_id), signed: -tx.amount }
+  }
+}
+
+function matchesFilter(tx: Transaction, filter: MethodFilter, data: MoneyData): boolean {
+  if (filter === 'all') return true
+  if (filter === 'credit_card') return tx.cc_id !== null
+  const type = filter === 'bank' ? 'checking' : 'cash'
+  return [tx.account_id, tx.to_account_id].some((id) => data.accounts.find((a) => a.uuid === id)?.type === type)
+}
+
+function TransactionList({ data }: { data: MoneyData }) {
+  const [filter, setFilter] = useState<MethodFilter>('all')
+  const [selected, setSelected] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const rows = data.transactions
+    .filter((tx) => matchesFilter(tx, filter, data))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.updated_at.localeCompare(a.updated_at))
+  const selectedTx = rows.find((tx) => tx.uuid === selected)
+
+  async function remove(tx: Transaction) {
+    try {
+      await deleteTransaction(tx)
+      setSelected(null)
+      setConfirming(false)
+    } catch {
+      setError('No se pudo eliminar. La cuenta o tarjeta ya no existe.')
+    }
+  }
+
+  return (
+    <>
+      <Rail label="Método" items={FILTERS} active={filter} onSelect={setFilter} />
+      <Panel>
+        <table className="roster">
+          <thead>
+            <tr>
+              <th scope="col">Fecha</th>
+              <th scope="col">Concepto</th>
+              <th scope="col">Método</th>
+              <th scope="col" className="num">Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr className="roster-empty">
+                <td colSpan={4}>—</td>
+              </tr>
+            )}
+            {rows.map((tx) => {
+              const row = describe(tx, data)
+              return (
+                <tr
+                  key={tx.uuid}
+                  className="roster-row"
+                  aria-selected={tx.uuid === selected}
+                  tabIndex={0}
+                  onClick={() => {
+                    setSelected(tx.uuid === selected ? null : tx.uuid)
+                    setConfirming(false)
+                    setError(null)
+                  }}
+                >
+                  <td className="mono dim">{formatDate(isoToDate(tx.date))}</td>
+                  <td>
+                    {row.concept}
+                    {tx.notes && <span className="row-sub">{tx.notes}</span>}
+                  </td>
+                  <td className="dim">{row.source}</td>
+                  <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`}>
+                    {row.signed === 0 ? formatMoney(tx.amount, tx.currency) : formatMoney(row.signed, tx.currency)}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </Panel>
+
+      {selectedTx && (
+        <div className="verb-row">
+          {confirming ? (
+            <>
+              <button type="button" className="verb-button verb-danger" onClick={() => remove(selectedTx)}>
+                <span className="key-glyph">A</span>
+                Confirmar eliminar
+              </button>
+              <button type="button" className="verb-button" onClick={() => setConfirming(false)}>
+                <span className="key-glyph">B</span>
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <button type="button" className="verb-button" onClick={() => setConfirming(true)}>
+              <span className="key-glyph">X</span>
+              Eliminar {TYPE_LABEL[selectedTx.type].toLowerCase()}
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p className="field-error">{error}</p>}
+      <FooterHint>
+        {confirming
+          ? 'Eliminar revierte el saldo de la cuenta o tarjeta.'
+          : rows.length === 0
+            ? EMPTY_HINT.list
+            : 'Toca un movimiento para ver acciones.'}
+      </FooterHint>
+    </>
+  )
+}
+
+export function Movimientos() {
+  const [view, setView] = useState<MovementView>('list')
+  const data = useMoneyData()
+
+  return (
+    <div className="stage-grid stage-grid--single">
+      <div className="stage-main">
+        <StageHeader title="Movimientos" aiBridge share />
+        <Rail label="Vista" items={MOVEMENT_VIEWS} active={view} onSelect={setView} />
+        {!data.loaded ? null : view === 'list' ? (
+          <TransactionList data={data} />
+        ) : (
+          <Panel>
+            <FooterHint>{EMPTY_HINT[view]}</FooterHint>
+          </Panel>
+        )}
+      </div>
+    </div>
+  )
+}
