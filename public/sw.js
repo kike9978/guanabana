@@ -1,4 +1,4 @@
-const CACHE = 'puente-v1'
+const CACHE = 'guanabana-v1'
 const SHELL = '/index.html'
 
 self.addEventListener('install', (event) => {

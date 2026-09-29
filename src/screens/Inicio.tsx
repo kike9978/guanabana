@@ -1,31 +1,115 @@
-import type { AddType } from '../app/navigation'
+import { useState } from 'react'
+import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel, Rail, StatBar } from '../components/hud'
 import { OpeningBalancePanel } from '../components/OpeningBalancePanel'
 import { StageHeader } from '../components/StageHeader'
 import { findOpeningAccount } from '../db/accounts'
+import { FieldError } from '../components/fields'
+import { updateSettings } from '../db/buckets'
 import type { Account } from '../db/types'
-import { useMoneyData } from '../db/useMoneyData'
-import { daysBetween } from '../lib/dates'
+import { useMoneyData, type MoneyData } from '../db/useMoneyData'
+import { bucketBalance } from '../lib/buckets'
+import { daysBetween, isoToDate, todayIso } from '../lib/dates'
+import { cashReviewDue, type CashReview } from '../lib/reconcile'
+import { ReconcileForm } from './Cuentas'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
+import { summarizeLoan } from '../lib/loans'
 import { roundMoney } from '../lib/money'
-import { computeRealAvailable, realAvailableTone } from '../lib/realAvailable'
-import { cardEvents } from '../lib/upcoming'
+import { realAvailableTone } from '../lib/realAvailable'
+import { moneySnapshot } from '../lib/snapshot'
+import { timeline, type TimelineEvent } from '../lib/timeline'
+
+const UPCOMING_DAYS = 14
 
 function sumType(accounts: Account[], type: Account['type']): number {
   return roundMoney(accounts.filter((a) => a.type === type).reduce((sum, a) => sum + a.current_balance, 0))
 }
 
-export function Inicio({ onAdd, onOpenAccounts }: { onAdd: (type: AddType) => void; onOpenAccounts: () => void }) {
+function whenLabel(days: number): string {
+  if (days < 0) return days === -1 ? 'Venció ayer' : `Venció hace ${-days} días`
+  if (days === 0) return 'Hoy'
+  if (days === 1) return 'Mañana'
+  return `En ${days} días`
+}
+
+function amountTone(event: TimelineEvent, days: number): string {
+  if (days < 0) return ' text-amber'
+  if (event.kind === 'income' || event.kind === 'loan_receivable') return ' text-cyan'
+  if (event.kind === 'cc_due' && days <= 3) return ' text-amber'
+  return ''
+}
+
+function CashReviewPanel({ review, data, onAdd }: { review: CashReview; data: MoneyData; onAdd: (type: AddType, prefill?: AddPrefill) => void }) {
+  const [counting, setCounting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { account } = review
+  const markReviewed = async () => {
+    if (data.settings) await updateSettings(data.settings, { cash_reviewed_at: todayIso() })
+  }
+
+  return (
+    <Panel title="Revisión de efectivo">
+      {counting ? (
+        <ReconcileForm data={data} target={{ kind: 'account', uuid: account.uuid }} onDone={() => setCounting(false)} onSaved={markReviewed} />
+      ) : (
+        <>
+          <div className="readout">
+            <span className="dim">{account.name} según la app</span>
+            <span className="mono">{formatMoney(account.current_balance, 'MXN')}</span>
+          </div>
+          <FooterHint>
+            Tu última revisión fue el {formatDate(isoToDate(review.lastReview))}. ¿Hubo gastos en efectivo que no anotaste?
+          </FooterHint>
+          <div className="verb-row">
+            <button type="button" className="verb-button verb-primary" onClick={() => onAdd('expense', { account_id: account.uuid })}>
+              <span className="key-glyph">G</span>
+              Anotar gasto
+            </button>
+            <button type="button" className="verb-button" onClick={() => setCounting(true)}>
+              <span className="key-glyph">C</span>
+              Contar efectivo
+            </button>
+            <button type="button" className="verb-button" onClick={() => markReviewed().catch(() => setError('No se pudo guardar. Intenta de nuevo.'))}>
+              <span className="key-glyph">L</span>
+              Está al día
+            </button>
+          </div>
+          {error && <FieldError>{error}</FieldError>}
+        </>
+      )}
+    </Panel>
+  )
+}
+
+export function Inicio({
+  onAdd,
+  onOpenScreen,
+  onOpenAhorro,
+}: {
+  onAdd: (type: AddType, prefill?: AddPrefill) => void
+  onOpenScreen: (screen: SubScreen) => void
+  onOpenAhorro: () => void
+}) {
   const data = useMoneyData()
-  const { accounts, cards } = data
-  const breakdown = computeRealAvailable({ accounts, cards, buffer: data.settings?.buffer_mxn ?? 0 })
+  const [selected, setSelected] = useState<string | null>(null)
+  const accounts = data.accounts.filter((a) => !a.archived || a.current_balance !== 0)
+  const cards = data.cards.filter((c) => !c.archived || c.current_balance !== 0)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const { cycle, commitments, breakdown } = moneySnapshot(data, now)
   const opening = findOpeningAccount(accounts)
   const hasMoneyData = accounts.length > 0 || cards.length > 0
   const hasLiquidAccounts = accounts.some((a) => a.type === 'checking' || a.type === 'cash')
-  const showOpening = opening ? opening.current_balance !== 0 || !hasLiquidAccounts : !hasLiquidAccounts
+  const showOpening = data.loaded && (opening ? opening.current_balance !== 0 || !hasLiquidAccounts : !hasLiquidAccounts)
   const money = (value: number) => formatMoney(value, 'MXN')
-  const today = new Date()
-  const upcoming = cardEvents(cards, today, 14)
+  const cashReviews = data.loaded ? cashReviewDue(data.accounts, data.transactions, data.settings ?? null, today) : []
+
+  const overdueFrom = commitments.filter((item) => item.overdue).reduce((min, item) => (item.date < min ? item.date : min), cycle.start)
+  const windowEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + UPCOMING_DAYS + 1)
+  const upcoming = timeline(data, overdueFrom < today ? overdueFrom : today, windowEnd).filter(
+    (event) => !event.paid && (event.date >= today || event.kind === 'bill' || event.kind === 'loan'),
+  )
+  const selectedEvent = upcoming.find((event) => event.key === selected)
 
   const rows = [
     { label: 'Banco', value: breakdown.bank, show: true },
@@ -40,13 +124,16 @@ export function Inicio({ onAdd, onOpenAccounts }: { onAdd: (type: AddType) => vo
   const scale = Math.max(1, ...rows.map((row) => Math.abs(row.value)))
   const tone = realAvailableTone(breakdown, hasMoneyData)
   const cardDebt = roundMoney(cards.reduce((sum, c) => sum + c.current_balance, 0))
+  const bucketTotal = roundMoney(data.buckets.reduce((sum, bucket) => sum + Math.max(0, bucketBalance(bucket, data.bucketMoves)), 0))
+  const borrowed = data.loans.filter((loan) => loan.direction === 'borrowed' && loan.status === 'active')
+  const loanDebt = roundMoney(borrowed.reduce((sum, loan) => sum + summarizeLoan(loan, data.installments, data.transactions).remaining, 0))
 
   const chips = [
     { id: 'bank', label: 'Banco', value: accounts.some((a) => a.type === 'checking') ? money(sumType(accounts, 'checking')) : '—' },
     { id: 'cash', label: 'Efectivo', value: accounts.some((a) => a.type === 'cash') ? money(sumType(accounts, 'cash')) : '—' },
     ...(breakdown.unassigned !== 0 ? [{ id: 'unassigned', label: 'Sin origen', value: money(breakdown.unassigned) }] : []),
     { id: 'card', label: 'TDC', value: cards.length > 0 ? money(cardDebt) : '—' },
-    { id: 'loans', label: 'Préstamos', value: '—' },
+    { id: 'loans', label: 'Préstamos', value: borrowed.length > 0 ? money(loanDebt) : '—' },
     { id: 'savings', label: 'Ahorro', value: accounts.some((a) => a.type === 'savings') ? money(sumType(accounts, 'savings')) : '—' },
   ]
 
@@ -54,7 +141,7 @@ export function Inicio({ onAdd, onOpenAccounts }: { onAdd: (type: AddType) => vo
     <div className="stage-grid">
       <div className="stage-main">
         <StageHeader title="¿Cuánto tengo de verdad?" share />
-        <Rail label="Cuentas" items={chips} onSelect={onOpenAccounts} />
+        <Rail label="Cuentas" items={chips} onSelect={(id) => onOpenScreen(id === 'loans' ? 'loans' : 'accounts')} />
         <div className="verb-row">
           <button type="button" className="verb-button" onClick={() => onAdd('expense')}>
             <span className="key-glyph">G</span>
@@ -64,44 +151,105 @@ export function Inicio({ onAdd, onOpenAccounts }: { onAdd: (type: AddType) => vo
             <span className="key-glyph">I</span>
             Ingreso
           </button>
-          <button type="button" className="verb-button" onClick={onOpenAccounts}>
+          <button type="button" className="verb-button" onClick={() => onOpenScreen('accounts')}>
             <span className="key-glyph">C</span>
             Cuentas
           </button>
+          <button type="button" className="verb-button" onClick={() => onOpenScreen('commitments')}>
+            <span className="key-glyph">F</span>
+            Pagos fijos
+          </button>
+          <button type="button" className="verb-button" onClick={() => onOpenScreen('loans')}>
+            <span className="key-glyph">L</span>
+            Préstamos
+          </button>
         </div>
         {showOpening && <OpeningBalancePanel key={opening?.updated_at ?? 'new'} opening={opening} />}
+        {cashReviews.map((review) => (
+          <CashReviewPanel key={review.account.uuid} review={review} data={data} onAdd={onAdd} />
+        ))}
         <Panel title="Próximos 14 días">
           {upcoming.length === 0 ? (
-            <FooterHint>Sin pagos ni cortes en los próximos 14 días.</FooterHint>
+            <FooterHint>Sin pagos, cuotas ni ingresos en los próximos 14 días.</FooterHint>
           ) : (
-            <table className="roster">
-              <tbody>
-                {upcoming.map((event) => {
-                  const days = daysBetween(today, event.date)
-                  return (
-                    <tr key={event.key}>
-                      <td className="mono dim">{formatDate(event.date)}</td>
-                      <td>
-                        {event.label}
-                        <span className="row-sub">{days === 0 ? 'Hoy' : days === 1 ? 'Mañana' : `En ${days} días`}</span>
-                      </td>
-                      <td className={`num mono${event.kind === 'cc_due' && days <= 3 ? ' text-amber' : ''}`}>
-                        {event.amount === null ? '—' : money(event.amount)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            <>
+              <table className="roster">
+                <tbody>
+                  {upcoming.map((event) => {
+                    const days = daysBetween(today, event.date)
+                    return (
+                      <tr
+                        key={event.key}
+                        className={event.action ? 'roster-row' : undefined}
+                        aria-selected={event.action ? event.key === selected : undefined}
+                        tabIndex={event.action ? 0 : undefined}
+                        onClick={event.action ? () => setSelected(event.key === selected ? null : event.key) : undefined}
+                      >
+                        <td className="mono dim">{formatDate(event.date)}</td>
+                        <td>
+                          {event.label}
+                          <span className={`row-sub${days < 0 ? ' text-amber' : ''}`}>{whenLabel(days)}</span>
+                        </td>
+                        <td className={`num mono${amountTone(event, days)}`}>{event.amount === null ? '—' : money(event.amount)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {selectedEvent?.action && (
+                <div className="verb-row">
+                  <button
+                    type="button"
+                    className="verb-button verb-primary"
+                    onClick={() => onAdd(selectedEvent.action!.type, selectedEvent.action!.prefill)}
+                  >
+                    <span className="key-glyph">A</span>
+                    {selectedEvent.action.type === 'income' ? 'Registrar ingreso' : 'Registrar pago'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </Panel>
-        <Panel title="Apartados">
-          <FooterHint>Tus apartados aparecerán aquí.</FooterHint>
+        <Panel
+          title="Apartados"
+          aside={
+            <button type="button" className="panel-verb" onClick={onOpenAhorro}>
+              Ver ahorro
+            </button>
+          }
+        >
+          {bucketTotal === 0 ? (
+            <FooterHint>Sin apartados todavía. Reserva dinero en Ahorro o con las reglas de ingreso.</FooterHint>
+          ) : (
+            <div className="stat-list">
+              {data.buckets.filter((bucket) => !bucket.archived).map((bucket) => {
+                const balance = bucketBalance(bucket, data.bucketMoves)
+                const target = bucket.target ?? 0
+                return (
+                  <StatBar
+                    key={bucket.uuid}
+                    label={bucket.name}
+                    value={money(balance)}
+                    ratio={target > 0 ? balance / target : balance / bucketTotal}
+                    tone={balance > 0 ? 'safe' : 'empty'}
+                  />
+                )
+              })}
+            </div>
+          )}
         </Panel>
       </div>
 
       <aside className="dossier" aria-label="Disponible real">
-        <Panel title="Disponible real">
+        <Panel
+          title="Disponible real"
+          aside={
+            <button type="button" className="panel-verb" onClick={() => onOpenScreen('settings')}>
+              Ajustes
+            </button>
+          }
+        >
           <p className={`hero-figure tone-${tone}`}>
             {formatAmount(breakdown.total)}
             <span className="hero-currency">MXN</span>
@@ -125,10 +273,13 @@ export function Inicio({ onAdd, onOpenAccounts }: { onAdd: (type: AddType) => vo
         <FooterHint>
           {!hasMoneyData
             ? 'Agrega tu saldo inicial para calcular tu Disponible real.'
-            : breakdown.unassigned !== 0
-              ? 'El saldo sin origen cuenta como disponible. Transfiérelo a banco o efectivo cuando quieras.'
-              : 'Tu banco no es lo que puedes gastar. Esto sí.'}
+            : cycle.hasSchedule
+              ? `Calculado hasta tu próximo ingreso, el ${formatDate(cycle.end)}.`
+              : `Sin días de ingreso: se apartan los pagos de los próximos ${daysBetween(cycle.start, cycle.end)} días.`}
         </FooterHint>
+        {breakdown.unassigned !== 0 && (
+          <FooterHint>El saldo sin origen cuenta como disponible. Transfiérelo a banco o efectivo cuando quieras.</FooterHint>
+        )}
       </aside>
     </div>
   )

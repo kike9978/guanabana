@@ -360,9 +360,36 @@
 }
 
 .grade-card {
+  display: block;
+  width: 100%;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.grade-card {
+  cursor: pointer;
+}
+
+button.grade-card:hover,
+button.grade-card[aria-pressed='true'] {
+  border-color: var(--cyan-bright);
+}
+
+.grade-head {
+  display: block;
+}
+
+.grade-body .stat-track {
+  display: block;
+}
+
+.grade-card.tone-empty .grade-head {
+  background: var(--ink-dim);
 }
 
 .grade-head {
@@ -508,6 +535,84 @@ button.calendar-day {
   border: 1px solid var(--cyan);
 }
 
+.mark-income,
+.mark-loan_receivable {
+  background: var(--cyan-bright);
+}
+
+.mark-bill {
+  background: var(--ink-dim);
+}
+
+.mark-loan {
+  background: transparent;
+  border: 1px solid var(--amber);
+}
+
+.mark-paid {
+  opacity: 0.3;
+}
+
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.day-event {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+
+.day-event .readout {
+  width: 100%;
+}
+
+.panel-verbs {
+  display: inline-flex;
+  gap: var(--space-3);
+}
+
+.preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.preview .input {
+  min-width: 0;
+  padding-block: var(--space-1);
+}
+
+.stat-list + .form {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.dossier .roster td {
+  white-space: nowrap;
+}
+
+.preview {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+}
+
 /* Verbs */
 
 .key-glyph {
@@ -526,7 +631,22 @@ button.calendar-day {
 
 .verb-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.bucket-dossier .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bucket-dossier .hero-figure {
+  margin: 0;
+}
+
+.dossier .roster td.wrap {
+  white-space: normal;
 }
 
 .verb-button {

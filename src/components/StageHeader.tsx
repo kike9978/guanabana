@@ -19,7 +19,7 @@ export function StageHeader({
       {(showAi || showShare) && (
         <div className="stage-verbs">
           {showAi && (
-            <button type="button" className="verb" aria-label="Puente IA">
+            <button type="button" className="verb" aria-label="Guanabana IA">
               <Icon name="sparkle" size={18} />
             </button>
           )}

@@ -111,10 +111,12 @@ export function ChoiceField<T extends string>({
 export function FormActions({
   submitLabel,
   onCancel,
+  cancelLabel = 'Cancelar',
   saving = false,
 }: {
   submitLabel: string
   onCancel?: () => void
+  cancelLabel?: string
   saving?: boolean
 }) {
   return (
@@ -126,7 +128,7 @@ export function FormActions({
       {onCancel && (
         <button type="button" className="verb-button" onClick={onCancel}>
           <span className="key-glyph">B</span>
-          Cancelar
+          {cancelLabel}
         </button>
       )}
     </div>

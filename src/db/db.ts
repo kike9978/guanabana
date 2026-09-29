@@ -11,6 +11,7 @@ export const STORES = [
   'loans',
   'loan_installments',
   'savings_buckets',
+  'bucket_moves',
   'recurring_items',
   'budgets',
   'settings',
@@ -21,8 +22,8 @@ export const STORES = [
 
 export type StoreName = (typeof STORES)[number]
 
-const DB_NAME = 'puente'
-const DB_VERSION = 2
+const DB_NAME = 'guanabana'
+const DB_VERSION = 3
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -99,7 +100,26 @@ export async function putMany<T extends BaseRecord>(store: StoreName, records: T
   notifyChange(store)
 }
 
-const CHANGE_EVENT = 'puente:db-change'
+export interface StoreWrite {
+  store: StoreName
+  put?: BaseRecord[]
+  delete?: string[]
+}
+
+export async function writeAcross(writes: StoreWrite[]): Promise<void> {
+  const stores = [...new Set(writes.map((write) => write.store))]
+  const db = await openDb()
+  const tx = db.transaction(stores, 'readwrite')
+  for (const write of writes) {
+    const objectStore = tx.objectStore(write.store)
+    for (const record of write.put ?? []) objectStore.put(record)
+    for (const uuid of write.delete ?? []) objectStore.delete(uuid)
+  }
+  await complete(tx)
+  for (const store of stores) notifyChange(store)
+}
+
+const CHANGE_EVENT = 'guanabana:db-change'
 
 export function notifyChange(store: StoreName): void {
   window.dispatchEvent(new CustomEvent<StoreName>(CHANGE_EVENT, { detail: store }))

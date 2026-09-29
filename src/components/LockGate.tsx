@@ -9,7 +9,7 @@ export function LockGate({ children }: { children: ReactNode }) {
   return (
     <div className="lock-gate">
       <Icon name="lock" size={32} />
-      <FooterHint>Desbloquea Puente para ver tus datos.</FooterHint>
+      <FooterHint>Desbloquea Guanabana para ver tus datos.</FooterHint>
     </div>
   )
 }

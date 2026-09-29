@@ -18,6 +18,9 @@ export interface RealAvailableInput {
   accounts: Account[]
   cards: CreditCard[]
   buffer: number
+  billsBeforeNextIncome?: number
+  loanInstallmentsBeforeNextIncome?: number
+  bucketsInLiquid?: number
 }
 
 function sumBalances(accounts: Account[], type: Account['type']): number {
@@ -32,14 +35,18 @@ export function ccReserve(cards: CreditCard[]): number {
     .reduce((sum, card) => sum + Math.max(0, card.current_balance), 0)
 }
 
-export function computeRealAvailable({ accounts, cards, buffer }: RealAvailableInput): RealAvailableBreakdown {
+export function computeRealAvailable({
+  accounts,
+  cards,
+  buffer,
+  billsBeforeNextIncome = 0,
+  loanInstallmentsBeforeNextIncome = 0,
+  bucketsInLiquid = 0,
+}: RealAvailableInput): RealAvailableBreakdown {
   const bank = sumBalances(accounts, 'checking')
   const cash = sumBalances(accounts, 'cash')
   const unassigned = sumBalances(accounts, 'unassigned')
   const reserve = ccReserve(cards)
-  const billsBeforeNextIncome = 0
-  const loanInstallmentsBeforeNextIncome = 0
-  const bucketsInLiquid = 0
 
   const total = roundMoney(
     bank + cash + unassigned - reserve - billsBeforeNextIncome - loanInstallmentsBeforeNextIncome - bucketsInLiquid - buffer,

@@ -29,5 +29,9 @@ export function balanceEffects(tx: Transaction): BalanceEffect[] {
         { store: 'accounts', uuid: required(tx.account_id, 'account_id'), delta: -tx.amount },
         { store: 'credit_cards', uuid: required(tx.cc_id, 'cc_id'), delta: -tx.amount },
       ]
+    case 'adjustment':
+      return tx.cc_id
+        ? [{ store: 'credit_cards', uuid: tx.cc_id, delta: tx.amount }]
+        : [{ store: 'accounts', uuid: required(tx.account_id, 'account_id'), delta: tx.amount }]
   }
 }

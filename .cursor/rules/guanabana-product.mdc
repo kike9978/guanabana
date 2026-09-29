@@ -1,9 +1,9 @@
 ---
-description: Puente product invariants for money, privacy, AI, and sharing
+description: Guanabana product invariants for money, privacy, AI, and sharing
 alwaysApply: true
 ---
 
-# Puente product
+# Guanabana product
 
 Source of truth: `docs/PLAN.md`. User-facing copy is Spanish (Mexico). Identifiers, schemas, and code are English.
 
@@ -16,6 +16,7 @@ Source of truth: `docs/PLAN.md`. User-facing copy is Spanish (Mexico). Identifie
 - A credit-card expense does not change the bank balance. It raises card debt and lowers Real Available immediately.
 - Loans are liabilities. Only installments due before the next income reduce Real Available. The rest of the schedule drives the projection until the payoff date. Money lent out counts only once received. Paid installments never change.
 - Income rules key off the 1st and 2nd income event, not the calendar month.
+- Income is MXN by default, entered already converted. Foreign currency (CAD) is opt-in via `settings.foreign_income`; with it off, no currency, FX, or day-rate UI appears.
 - Suggestions, imports, and model output never commit. The user confirms the write.
 - Skip and shortfall copy is neutral. Do not scold a negative remainder.
 
@@ -30,7 +31,7 @@ Source of truth: `docs/PLAN.md`. User-facing copy is Spanish (Mexico). Identifie
 
 - No backend, accounts, analytics, or stored LLM keys.
 - The app does not call a model. It builds a prompt, the user pastes JSON, the app validates.
-- Share only in a URL fragment (`#s=`), a QR of that payload, or a `.puente` file. Never `?query`.
+- Share only in a URL fragment (`#s=`), a QR of that payload, or a `.guanabana` file. Never `?query`.
 - Fragments and QR are snapshots. Full history goes to a file. Refuse oversized links.
 - Payloads omit PANs, account numbers, and full names.
 - Encrypt at rest. Offer a passphrase on export.

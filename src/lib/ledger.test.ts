@@ -97,6 +97,20 @@ describe('computeRealAvailable', () => {
   })
 })
 
+describe('adjustment', () => {
+  test('a signed gap moves only the reconciled account', () => {
+    expect(balanceEffects(tx({ type: 'adjustment', amount: -250, account_id: 'bank' }))).toEqual([
+      { store: 'accounts', uuid: 'bank', delta: -250 },
+    ])
+  })
+
+  test('a card adjustment moves the debt, not the bank', () => {
+    expect(balanceEffects(tx({ type: 'adjustment', amount: 80, cc_id: 'card' }))).toEqual([
+      { store: 'credit_cards', uuid: 'card', delta: 80 },
+    ])
+  })
+})
+
 describe('nextDateForDay', () => {
   test('clamps day 31 to the end of a short month', () => {
     expect(nextDateForDay(31, new Date(2026, 1, 10)).getDate()).toBe(28)

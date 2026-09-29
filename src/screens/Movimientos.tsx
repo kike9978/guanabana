@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { MOVEMENT_VIEWS, type MovementView } from '../app/navigation'
+import { isEditable, MOVEMENT_VIEWS, type EditableTransaction, type MovementView } from '../app/navigation'
 import { FooterHint, Panel, Rail } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
-import { deleteTransaction } from '../db/ledger'
+import { deleteTransaction, LedgerBlockedError } from '../db/ledger'
 import type { Transaction } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { isoToDate } from '../lib/dates'
@@ -22,6 +22,7 @@ const TYPE_LABEL: Record<Transaction['type'], string> = {
   expense: 'Gasto',
   transfer: 'Transferencia',
   cc_payment: 'Pago TDC',
+  adjustment: 'Ajuste',
 }
 
 const EMPTY_HINT: Record<MovementView, string> = {
@@ -48,6 +49,10 @@ function describe(tx: Transaction, data: MoneyData) {
       return { concept: 'Transferencia', source: `${account(tx.account_id)} → ${account(tx.to_account_id)}`, signed: 0 }
     case 'cc_payment':
       return { concept: `Pago ${card}`, source: account(tx.account_id), signed: -tx.amount }
+    case 'adjustment':
+      return tx.cc_id
+        ? { concept: 'Ajuste de saldo', source: card, signed: -tx.amount }
+        : { concept: 'Ajuste de saldo', source: account(tx.account_id), signed: tx.amount }
   }
 }
 
@@ -58,7 +63,7 @@ function matchesFilter(tx: Transaction, filter: MethodFilter, data: MoneyData): 
   return [tx.account_id, tx.to_account_id].some((id) => data.accounts.find((a) => a.uuid === id)?.type === type)
 }
 
-function TransactionList({ data }: { data: MoneyData }) {
+function TransactionList({ data, onEdit }: { data: MoneyData; onEdit: (tx: EditableTransaction) => void }) {
   const [filter, setFilter] = useState<MethodFilter>('all')
   const [selected, setSelected] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -74,8 +79,12 @@ function TransactionList({ data }: { data: MoneyData }) {
       await deleteTransaction(tx)
       setSelected(null)
       setConfirming(false)
-    } catch {
-      setError('No se pudo eliminar. La cuenta o tarjeta ya no existe.')
+    } catch (cause) {
+      setError(
+        cause instanceof LedgerBlockedError
+          ? 'Ya registraste cuotas del calendario nuevo de este préstamo. Elimina esos pagos primero.'
+          : 'No se pudo eliminar. La cuenta o tarjeta ya no existe.',
+      )
     }
   }
 
@@ -116,6 +125,11 @@ function TransactionList({ data }: { data: MoneyData }) {
                   <td>
                     {row.concept}
                     {tx.notes && <span className="row-sub">{tx.notes}</span>}
+                    {tx.original_currency === 'CAD' && tx.original_amount && tx.fx_rate && (
+                      <span className="row-sub">
+                        {`${formatMoney(tx.original_amount, 'CAD')} × ${tx.fx_rate}${tx.days_worked ? ` · ${tx.days_worked} días` : ''}`}
+                      </span>
+                    )}
                   </td>
                   <td className="dim">{row.source}</td>
                   <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`}>
@@ -142,17 +156,29 @@ function TransactionList({ data }: { data: MoneyData }) {
               </button>
             </>
           ) : (
-            <button type="button" className="verb-button" onClick={() => setConfirming(true)}>
-              <span className="key-glyph">X</span>
-              Eliminar {TYPE_LABEL[selectedTx.type].toLowerCase()}
-            </button>
+            <>
+              {isEditable(selectedTx) && (
+                <button type="button" className="verb-button" onClick={() => onEdit(selectedTx)}>
+                  <span className="key-glyph">E</span>
+                  Editar
+                </button>
+              )}
+              <button type="button" className="verb-button" onClick={() => setConfirming(true)}>
+                <span className="key-glyph">X</span>
+                Eliminar {TYPE_LABEL[selectedTx.type].toLowerCase()}
+              </button>
+            </>
           )}
         </div>
       )}
       {error && <p className="field-error">{error}</p>}
       <FooterHint>
         {confirming
-          ? 'Eliminar revierte el saldo de la cuenta o tarjeta.'
+          ? selectedTx?.loan_extra_id
+            ? 'Eliminar revierte el saldo y regresa el calendario anterior del préstamo.'
+            : selectedTx?.bucket_id
+              ? 'Eliminar revierte la transferencia y regresa el dinero al apartado.'
+              : 'Eliminar revierte el saldo de la cuenta o tarjeta.'
           : rows.length === 0
             ? EMPTY_HINT.list
             : 'Toca un movimiento para ver acciones.'}
@@ -161,7 +187,7 @@ function TransactionList({ data }: { data: MoneyData }) {
   )
 }
 
-export function Movimientos() {
+export function Movimientos({ onEdit }: { onEdit: (tx: EditableTransaction) => void }) {
   const [view, setView] = useState<MovementView>('list')
   const data = useMoneyData()
 
@@ -171,7 +197,7 @@ export function Movimientos() {
         <StageHeader title="Movimientos" aiBridge share />
         <Rail label="Vista" items={MOVEMENT_VIEWS} active={view} onSelect={setView} />
         {!data.loaded ? null : view === 'list' ? (
-          <TransactionList data={data} />
+          <TransactionList data={data} onEdit={onEdit} />
         ) : (
           <Panel>
             <FooterHint>{EMPTY_HINT[view]}</FooterHint>

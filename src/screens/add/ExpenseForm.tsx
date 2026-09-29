@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../../components/fields'
-import { draftTransaction, recordTransaction } from '../../db/ledger'
+import { selectable } from '../../db/accounts'
+import { saveTransaction } from '../../db/ledger'
 import { UNCATEGORIZED_KEY } from '../../db/seed'
-import type { PaymentMethod } from '../../db/types'
-import type { MoneyData } from '../../db/useMoneyData'
+import type { AccountType, PaymentMethod } from '../../db/types'
+import type { AddFormProps } from './formProps'
 import { todayIso } from '../../lib/dates'
 import { formatMoney } from '../../lib/format'
 import { pickValid } from '../../lib/forms'
@@ -17,29 +18,41 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
   unassigned: 'Sin origen',
 }
 
-export function ExpenseForm({ data, onDone, onOpenAccounts }: { data: MoneyData; onDone: () => void; onOpenAccounts: () => void }) {
-  const [amount, setAmount] = useState('')
+const METHOD_FOR_ACCOUNT: Record<AccountType, PaymentMethod | null> = {
+  checking: 'bank',
+  cash: 'cash',
+  unassigned: 'unassigned',
+  savings: null,
+}
+
+export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: AddFormProps) {
+  const [amount, setAmount] = useState(prefill?.amount !== undefined ? String(prefill.amount) : '')
   const [method, setMethod] = useState<PaymentMethod | null>(null)
-  const [sourceId, setSourceId] = useState<string | null>(null)
-  const [categoryId, setCategoryId] = useState<string | null>(null)
-  const [date, setDate] = useState(todayIso())
-  const [notes, setNotes] = useState('')
+  const [sourceId, setSourceId] = useState<string | null>(prefill?.cc_id ?? prefill?.account_id ?? null)
+  const [categoryId, setCategoryId] = useState<string | null>(prefill?.category_id ?? null)
+  const [date, setDate] = useState(prefill?.date ?? todayIso())
+  const [notes, setNotes] = useState(prefill?.notes ?? '')
+  const prefillAccount = data.accounts.find((a) => a.uuid === prefill?.account_id)
+  const prefillMethod = prefill?.cc_id ? 'credit_card' : prefillAccount ? METHOD_FOR_ACCOUNT[prefillAccount.type] : null
+  const prefillCategory = data.categories.find((c) => c.key === prefill?.category_key)?.uuid ?? null
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  const keep = [prefill?.account_id, prefill?.cc_id]
+  const accounts = selectable(data.accounts, keep)
   const sourcesByMethod: Record<PaymentMethod, { value: string; label: string }[]> = {
-    bank: data.accounts.filter((a) => a.type === 'checking').map((a) => ({ value: a.uuid, label: a.name })),
-    cash: data.accounts.filter((a) => a.type === 'cash').map((a) => ({ value: a.uuid, label: a.name })),
-    credit_card: data.cards.map((c) => ({ value: c.uuid, label: c.name })),
-    unassigned: data.accounts
-      .filter((a) => a.type === 'unassigned' && a.current_balance !== 0)
+    bank: accounts.filter((a) => a.type === 'checking').map((a) => ({ value: a.uuid, label: a.name })),
+    cash: accounts.filter((a) => a.type === 'cash').map((a) => ({ value: a.uuid, label: a.name })),
+    credit_card: selectable(data.cards, keep).map((c) => ({ value: c.uuid, label: c.name })),
+    unassigned: accounts
+      .filter((a) => a.type === 'unassigned' && (a.current_balance !== 0 || a.uuid === prefill?.account_id))
       .map((a) => ({ value: a.uuid, label: `${a.name} · ${formatMoney(a.current_balance, a.currency)}` })),
   }
   const methodOptions = (Object.keys(METHOD_LABEL) as PaymentMethod[])
     .filter((m) => sourcesByMethod[m].length > 0)
     .map((m) => ({ value: m, label: METHOD_LABEL[m] }))
 
-  const activeMethod = pickValid(method, methodOptions)
+  const activeMethod = pickValid(method ?? prefillMethod, methodOptions)
   const sources = activeMethod ? sourcesByMethod[activeMethod] : []
   const activeSource = pickValid(sourceId, sources)
 
@@ -47,7 +60,7 @@ export function ExpenseForm({ data, onDone, onOpenAccounts }: { data: MoneyData;
     .filter((c) => c.kind === 'expense')
     .map((c) => ({ value: c.uuid, label: c.name }))
   const fallbackCategory = data.categories.find((c) => c.key === UNCATEGORIZED_KEY)?.uuid ?? null
-  const activeCategory = pickValid(categoryId ?? fallbackCategory, categoryOptions)
+  const activeCategory = pickValid(categoryId ?? prefillCategory ?? fallbackCategory, categoryOptions)
 
   if (data.loaded && methodOptions.length === 0) {
     return <NeedsAccount onOpenAccounts={onOpenAccounts} />
@@ -61,18 +74,19 @@ export function ExpenseForm({ data, onDone, onOpenAccounts }: { data: MoneyData;
 
     setSaving(true)
     try {
-      await recordTransaction(
-        draftTransaction({
-          type: 'expense',
-          amount: value,
-          date,
-          payment_method: activeMethod,
-          account_id: activeMethod === 'credit_card' ? null : activeSource,
-          cc_id: activeMethod === 'credit_card' ? activeSource : null,
-          category_id: activeCategory ?? null,
-          notes: notes.trim(),
-        }),
-      )
+      await saveTransaction(editing, {
+        type: 'expense',
+        amount: value,
+        date,
+        payment_method: activeMethod,
+        account_id: activeMethod === 'credit_card' ? null : activeSource,
+        cc_id: activeMethod === 'credit_card' ? activeSource : null,
+        category_id: activeCategory ?? null,
+        notes: notes.trim(),
+        recurring_id: prefill?.recurring_id ?? null,
+        occurrence: prefill?.occurrence ?? null,
+        loan_installment_id: prefill?.loan_installment_id ?? null,
+      })
       onDone()
     } catch {
       setError('No se pudo guardar. Intenta de nuevo.')
@@ -97,9 +111,15 @@ export function ExpenseForm({ data, onDone, onOpenAccounts }: { data: MoneyData;
       {activeMethod === 'credit_card' && (
         <FieldNote>Con tarjeta tu banco no cambia. Sube la deuda y baja tu Disponible real.</FieldNote>
       )}
-      <FieldNote>Un monto negativo se registra como reembolso.</FieldNote>
+      {editing ? (
+        <FieldNote>Al guardar se revierte el saldo anterior y se aplica el nuevo.</FieldNote>
+      ) : prefill?.recurring_id || prefill?.loan_installment_id ? (
+        <FieldNote>Este pago ya estaba apartado. Al guardarlo, tu Disponible real no cambia.</FieldNote>
+      ) : (
+        <FieldNote>Un monto negativo se registra como reembolso.</FieldNote>
+      )}
       {error && <FieldError>{error}</FieldError>}
-      <FormActions submitLabel="Guardar gasto" saving={saving} onCancel={onDone} />
+      <FormActions submitLabel={editing ? 'Guardar cambios' : 'Guardar gasto'} saving={saving} onCancel={onDone} />
     </form>
   )
 }

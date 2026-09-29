@@ -1,12 +1,12 @@
 ---
-description: iDroid HUD visual rules for Puente screens
+description: iDroid HUD visual rules for Guanabana screens
 globs: src/**/*.{tsx,css}
 alwaysApply: false
 ---
 
 # iDroid HUD
 
-Puente looks like the MGSV iDroid: cyan hairline panels on navy, dense rows, one dossier. Tokens and screen patterns live in `docs/PLAN.md` § Visual system. Use the CSS variables. Do not add a second palette.
+Guanabana looks like the MGSV iDroid: cyan hairline panels on navy, dense rows, one dossier. Tokens and screen patterns live in `docs/PLAN.md` § Visual system. Use the CSS variables. Do not add a second palette.
 
 ## Patterns — pick one, do not invent
 

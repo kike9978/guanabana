@@ -1,6 +1,8 @@
-# Puente — Implementation plan v1.0
+# Guanabana — Implementation plan v1.0
 
-Local-first cashflow and savings app for a contractor paid in CAD and living in MXN.
+Local-first cashflow and savings app for anyone who lives in MXN and gets paid on a few income events a month: salary, freelance, or contract work.
+
+Income is entered in MXN, already converted, by default. Foreign-currency income (CAD today) is an opt-in setting for people paid abroad. With it off, no FX, day rate, or currency field appears anywhere, and every calculation below works in MXN only.
 
 **Core promise:** Know what you really have, what is already promised, and what you can safely spend before your next income.
 
@@ -37,24 +39,24 @@ References: iDroid staff roster and weapons development (MGSV). The app is that 
 
 Reuse these. Do not invent a new layout for a new feature.
 
-| Pattern | iDroid source | Use in Puente |
+| Pattern | iDroid source | Use in Guanabana |
 |---|---|---|
-| Status strip | `iDROID VER` + meter + clock | Breadcrumb, next-income meter, FX / GMP-style totals |
+| Status strip | `iDROID VER` + meter + clock | Breadcrumb, next-income meter, GMP-style totals (FX only with foreign income on) |
 | Section rail | Weapon icon row with counts | Account chips, or the five bottom tabs on small screens |
 | Roster | Staff name grid | Transactions, bills, items, places, import diff, audit log |
-| Grade cards | Grade 1 / 2 / 3 weapon tiles | Emergency / Retirement / Travel, Conservative / Base / Optimistic FX, and pay as scheduled / extra payment / pay off now |
+| Grade cards | Grade 1 / 2 / 3 weapon tiles | Emergency / Retirement / Travel, Conservative / Base / Optimistic income, and pay as scheduled / extra payment / pay off now |
 | Requirements table | Required vs Current | Savings-rule check, “can I buy?”, CC payment vs bank, cheapest place vs last price |
 | Dossier | Right column: title, blurb, stat bars | Real-available breakdown, card detail, loan detail, scenario result, item price history |
 | Stat bars | Damage / penetration bars | Breakdown of Disponible real, budget pace, bucket progress, spend by type |
 | Series | Thin cyan meter, not a chart theme | Expense over time, unit price by date. One cyan series. Amber is the previous window only. |
 | Command bar | X / Y / A verb row | Select, switch display, change assignment, share, add |
-| Resource cluster | GMP bottom-right | MXN liquid, CAD rate, buffer |
+| Resource cluster | GMP bottom-right | MXN liquid, buffer, and the FX rate only with foreign income on |
 
 ### Mobile shell
 
 Phone is the primary surface. Wide screens keep the dossier as a right column; narrow screens turn it into a sheet.
 
-1. **Status strip** — `PUENTE` · section path · thin meter (days until next income) · clock.
+1. **Status strip** — `GUANABANA` · section path · thin meter (days until next income) · clock.
 2. **Stage** — the active pattern (roster, grade cards, or dossier).
 3. **Command bar** — five tabs as glyphs plus a short label: Inicio, Tiempo, Movimientos, Ahorro, Proyección. Active tab is brighter cyan with a 1px underline. Movimientos switches view (Lista, Estadísticas, Precios). That is a display change, not a sixth tab.
 4. **Add** — a command-bar verb (`+`), not a shadowed floating button. Choices: Gasto, Ingreso, Transferencia, Pago TDC, Regla de ahorro.
@@ -90,7 +92,7 @@ Type scale: labels 11px uppercase, tracking ~0.08em; row titles 15px; section ti
 - Hero question on Inicio: **¿Cuánto tengo de verdad?**
 - Hero figure label: **Disponible real**.
 - Empty and skip states are neutral. A negative first-income remainder says the rule does not apply. It does not scold.
-- Amounts: `es-MX` grouping, currency code visible (`MXN`, `CAD`). Never a bare `$` when both currencies can appear.
+- Amounts: `es-MX` grouping, currency code visible (`MXN`, and `CAD` when foreign income is on). Never a bare `$`.
 
 ---
 
@@ -100,8 +102,8 @@ Four layers. Location is not purpose.
 
 | Layer | Examples | Question it answers |
 |---|---|---|
-| Accounts | Bank MXN, Cash MXN, CAD, Savings | Where does the money sit? |
-| Buckets | Emergency, Retirement, Travel | Why is it reserved? |
+| Accounts | Bank MXN, Cash MXN, Savings (a CAD account is optional) | Where does the money sit? |
+| Buckets | Emergency, Retirement, Travel, plus any the user creates (Auto, Regalos) | Why is it reserved? |
 | Liabilities | Credit card A, B, car loan, personal loan, money borrowed from family | What is already owed? |
 | Events | Income, bills, due dates, loan installments, savings rules | What changes the future? |
 
@@ -136,17 +138,22 @@ Real_Available_On(d) = projected Liquid(d) − reserves due before the next inco
 Income rules key off the 1st and 2nd income event, not the calendar month.
 
 ```
-Expected_MXN = CAD_Day_Rate × Expected_Days × FX_Scenario
+Expected_MXN = recurring income amount in MXN × Income_Scenario
+               (foreign income on: CAD amount, or CAD_Day_Rate × Expected_Days, × FX_Scenario)
 
-Remainder = Reconciled_Bank_Balance − Most_Recent_Income
+Reconciled_Liquid = Liquid after the user confirms the real balance of the income account
+
+Remainder = Reconciled_Liquid − Most_Recent_Income − Virtual_Buckets_In_Liquid − CC_Reserve
 Emergency_Contribution = max(0, Remainder)
 
-Retirement_Contribution = Reconciled_Bank_Balance × 0.20
-Travel_Contribution = min(5000, Reconciled_Bank_Balance − Retirement_Contribution)
-True_Bank_After_CC = Bank_Balance − Credit_Card_Balance_Due
+Retirement_Contribution = Most_Recent_Income × retirement_pct
+Travel_Contribution = min(travel_mxn, Most_Recent_Income − Retirement_Contribution)
+Short = max(0, Retirement + Travel − Real_Available)   (Real_Available after reconcile)
 ```
 
-Second-income percentages and the travel amount are settings, defaulting to 20% and 5,000 MXN.
+The remainder subtracts money already in buckets and card debt, so a rule never reserves the same peso twice or treats owed money as leftover. Retirement is a share of the income, not of the whole balance. The share and the travel amount are settings, defaulting to 20% and 5,000 MXN.
+
+Which income is 1st or 2nd comes from the active recurring income items sorted by day: the earliest is the first income, the next one the second. An income linked to a recurring item uses that item. Otherwise it matches the nearest payday. With a single payday it is always the first income, and with no schedule the user picks the rule. Only the main income category (**Ingreso principal**) or a scheduled income triggers a rule. Loan repayments and other income never do.
 
 ---
 
@@ -156,23 +163,25 @@ Local SQLite (Capacitor) or IndexedDB (PWA). Export is encrypted JSON. Every dom
 
 | Table | Fields that matter |
 |---|---|
-| `accounts` | name, type (`checking` / `cash` / `savings` / `unassigned`), currency, current_balance, balance_date |
-| `transactions` | date, type (`income` / `expense` / `transfer` / `cc_payment`), amount, currency, account_id, category_id, place_id, payment_method (`bank` / `cash` / `credit_card`), cc_id, notes, source (`manual` / `ai_manual` / `import`) |
+| `accounts` | name, type (`checking` / `cash` / `savings` / `unassigned`), currency, current_balance, balance_date, archived |
+| `categories` | key, name, kind (`expense` / `income`), parent_id (optional, one level only), archived |
+| `transactions` | date, type (`income` / `expense` / `transfer` / `cc_payment` / `adjustment`, a signed reconcile gap that stats ignore), amount, currency, account_id, category_id (a category or a subcategory), place_id, payment_method (`bank` / `cash` / `credit_card`), cc_id, notes, source (`manual` / `ai_manual` / `import`). CAD income also keeps original_amount, original_currency, fx_rate, days_worked; `amount` is always the MXN that landed. |
 | `transaction_lines` | transaction_id, item_id, place_id, qty, unit, unit_price, line_total, currency |
 | `items` | name, normalized_name, default_unit, category_id, barcode (optional, local only) |
 | `places` | name, kind (`supermarket` / `market` / `convenience` / `other`), area |
-| `credit_cards` | name, limit, current_balance, statement_day, due_day, payment_strategy (`full` / `statement` / `minimum`) |
+| `credit_cards` | name, limit, current_balance, statement_day, due_day, payment_strategy (`full` / `statement` / `minimum`), archived |
 | `loans` | name, direction (`borrowed` / `lent`), lender_label (short, no full names), principal, currency, interest (`none` / `fixed_rate` / `fixed_installment`), rate_annual, installment_amount, frequency (`monthly` / `biweekly` / `per_income` / `custom`), first_due_date, installment_count, pay_from_account_id, status (`active` / `paid` / `paused`) |
-| `loan_installments` | loan_id, due_date, amount, principal_part, interest_part, status (`scheduled` / `paid` / `skipped` / `late`), transaction_id |
-| `savings_buckets` | name, target, balance, rule_type (`emergency` / `retirement` / `travel`) |
+| `loan_installments` | loan_id, due_date, amount, principal_part, interest_part, status (`scheduled` / `skipped` / `settled` / `superseded`), created_by, replaced_by. Paid and late are derived: an installment is paid when a transaction carries its `loan_installment_id` (or it is `settled`, paid before tracking), and late when it is unpaid past its due date. `superseded` rows were replaced by an extra payment and stay for undo. |
+| `savings_buckets` | name, target, target_date (optional), sort_order, archived, rule_type (`emergency` / `retirement` / `travel` / `custom`), account_id (null = bank or cash; a savings account = outside liquid). Balance is derived from `bucket_moves`. |
+| `bucket_moves` | bucket_id, amount (signed), date, reason, source (`manual` / `first_income` / `second_income` / `bucket_transfer`), income_tx_id, transfer_id (pairs the two moves of a bucket-to-bucket transfer) |
 | `recurring_items` | name, amount, due_day, account_id, category_id, type (`bill` / `income`) |
-| `budgets` | category_id, month, limit_mxn |
-| `settings` | cad_day_rate, fx_rate, fx_source, buffer_mxn, first_income_rule, second_income_rule |
+| `budgets` | category_id (a category or a subcategory), month, limit_mxn |
+| `settings` | foreign_income (default off), cad_day_rate, fx_rate, fx_source, fx_date, buffer_mxn, first_income_rule, second_income_rule |
 | `projection_scenarios` | saved what-if plans |
 | `ai_jobs` | task, status (`prompt_copied` / `json_pasted` / `validated` / `committed` / `failed`), prompt_hash, response_hash |
 | `share_events` | kind (`url` / `qr` / `file` / `p2p`), payload_hash |
 
-AI jobs and share events are append-only.
+AI jobs, share events, and bucket moves are append-only.
 
 ### Merge
 
@@ -182,6 +191,7 @@ AI jobs and share events are append-only.
 | Credit cards | Match id, keep newer `updated_at`. |
 | Loans, installments | Never auto-overwrite a balance or schedule. Show the diff and ask. |
 | Items, places | Match `uuid`. Similar names never auto-merge. Show the diff and ask. |
+| Categories, subcategories | Match `uuid`. Similar names, or the same name under another parent, never auto-merge. Show the diff and ask. |
 | Price lines | Match `uuid`. A line never changes Real Available by itself. |
 | Buckets | Never auto-overwrite. Show the diff and ask. |
 | Settings | Never auto-overwrite. Ask. |
@@ -193,11 +203,11 @@ AI jobs and share events are append-only.
 
 - PWA with IndexedDB first. Capacitor + SQLite only if a native binary is required. Service worker for offline.
 - Encryption at rest via Web Crypto. Biometric or passcode lock.
-- FX: manual entry, optional direct fetch from a public API, cache the last rate. No app backend.
+- FX (only with foreign income on): manual entry, optional direct fetch from a public API, cache the last rate. No app backend.
 - No analytics, no accounts, no server.
 - Backup reminder every 30 days: export your data.
 - AI never calls a model. The app builds a prompt; the user pastes JSON back; the app validates.
-- Share payloads ride in the URL fragment (`#`), a QR of that same payload, or a `.puente` file. Never a query string.
+- Share payloads ride in the URL fragment (`#`), a QR of that same payload, or a `.guanabana` file. Never a query string.
 
 ---
 
@@ -231,8 +241,8 @@ AI jobs and share events are append-only.
 - [x] **Ajustar** edits it explicitly, showing the previous amount. There is only ever one opening balance.
 - [x] Assign it to bank or cash with a transfer. Disponible real stays the same, and the unassigned balance shrinks.
 - [x] When the unassigned balance reaches zero, hide the chip and the breakdown row.
-- [ ] Opening values for cards and loans: current debt and next due date, without importing past transactions.
-- [ ] A reconcile after the opening balance shows the gap versus the new real number, never overwrites silently.
+- [x] Opening values for cards and loans: current debt and next due date, without importing past transactions. Cards take the current debt on creation. Loans take “Cuotas ya pagadas”; those rows are `settled` and never touch a balance.
+- [x] A reconcile after the opening balance shows the gap versus the new real number, never overwrites silently. **Ajustar saldo** on any account or card shows calculated, real, the gap, and the change in Disponible real. Confirm writes one `adjustment` movement that can be deleted to undo.
 
 ### Accounts and cards
 
@@ -240,21 +250,30 @@ AI jobs and share events are append-only.
 - [x] Each account stores type, currency, and current balance.
 - [x] Credit cards: name, limit, balance, statement day, due day, strategy (`full` default).
 - [x] Account chips on Inicio use the section-rail pattern and show a count or balance.
-- [ ] Edit and archive accounts and cards.
+- [x] Edit and archive accounts and cards. Editing changes details only (name, bank ↔ cash, card limit, days, strategy); balances change only through Ajustar saldo. Archiving needs a zero balance; archived records leave the pickers and keep their history.
 
 ### Loans
 
-- [ ] Create a loan: name, borrowed or lent, principal, currency, installment amount or rate, frequency, first due date, number of installments, and the account that pays it.
-- [ ] Generate the installment schedule locally. The user can edit any row before saving.
-- [ ] Interest types: none (family loan), fixed installment (the bank quotes one amount), fixed annual rate (the app splits principal and interest).
+- [x] Create a loan: name, borrowed or lent, principal, currency, installment amount or rate, frequency, first due date, number of installments, and the account that pays it.
+- [x] Generate the installment schedule locally. The user can edit any row before saving (dates always; amounts unless the loan uses an annual rate). Saving is blocked until the rows add up to the principal.
+- [x] Interest types: none (family loan), fixed installment (the bank quotes one amount), fixed annual rate (the app splits principal and interest).
 - [ ] Frequency `per_income` ties an installment to the 1st or 2nd income event, not a calendar day.
-- [ ] Installments due before the next income reduce Disponible real. The rest of the principal does not.
-- [ ] Mark an installment paid: creates one bank or cash expense linked by `transaction_id`, lowers the remaining balance, and the next installment becomes active.
-- [ ] Extra payment: lowers the remaining principal and recomputes the payoff date or the installment count after confirm.
-- [ ] Lent money: a receivable roster. Expected repayments show on Tiempo, never in Disponible real until marked received.
-- [ ] Loan chip on Inicio: total owed, next installment, and the payoff date.
-- [ ] Loan dossier: remaining, paid so far, interest paid, installments left, payoff date, and a stat bar of progress.
-- [ ] Installment due dates appear on Tiempo and in the next-14-days list next to bills and card due dates.
+- [x] Installments due before the next income reduce Disponible real. The rest of the principal does not.
+- [x] Mark an installment paid: **Pagar cuota** opens the prefilled expense form. The saved expense carries `loan_installment_id`, which lowers the remaining balance and moves on to the next installment.
+- [x] Extra payment: lowers the remaining principal and recomputes the payoff date or the installment count after confirm. **Abono extra** previews now vs. after (“Terminar antes” or “Bajar la cuota”). One write records the linked movement (`loan_extra_id`), marks the unpaid rows `superseded`, and adds the new rows. Deleting the movement restores the previous schedule, unless a new row was already paid.
+- [x] Lent money: a receivable roster. Expected repayments show on Tiempo, never in Disponible real until marked received (**Registrar cobro** opens the income form).
+- [x] Loan chip on Inicio: total owed. Next installment and payoff date are in the Préstamos roster.
+- [x] Loan dossier: remaining, paid so far, interest paid, installments left, payoff date, and a stat bar of progress.
+- [x] Installment due dates appear on Tiempo and in the next-14-days list next to bills and card due dates.
+
+### Income days and fixed bills
+
+- [x] **Pagos fijos** screen: income days and fixed bills (name, amount, day of month, account, category).
+- [x] Income cycle runs from the previous income day to the next one. Without income days it falls back to 15 days.
+- [x] Unpaid bills in the current cycle reduce Disponible real. Overdue ones stay reserved and show in amber.
+- [x] Registering a bill or income opens the prefilled form. The transaction carries `recurring_id` + `occurrence`, which marks that occurrence as done.
+- [x] Status strip meter shows progress toward the next income (“En N días”).
+- [x] Edit a recurring item, and income with an unknown amount (amount left empty).
 
 ### Transactions
 
@@ -266,26 +285,26 @@ AI jobs and share events are append-only.
 - [x] Transfer between accounts does not change Real Available except when it moves money in or out of a liquid account.
 - [x] Roster list: select, name, amount, method. Filter by method without leaving the HUD.
 - [x] Delete a movement after confirm. The balance effect is reversed in the same write.
-- [ ] Edit a movement (reverse the old effect, apply the new one in one write).
+- [x] Edit a movement (reverse the old effect, apply the new one in one write). Reuses the add forms; links to bills and loan installments are kept. Adjustments are delete-only.
 
 ### Dashboard
 
-- [ ] Hero: **Disponible real**, colored cyan / amber / heat from the sign and a tightness threshold.
-- [ ] Tap opens the dossier breakdown: Bank, Cash, − CC debt, − bills before next income, − loan installments before next income, − buckets in liquid, − buffer, = safe to spend.
-- [ ] Next 14 days: income, bills, card due dates. Card due and statement dates are done; income and bills wait for recurring items.
-- [x] Quick verbs: add expense, add income, open accounts. Savings rule and share stay stubs until their phases.
+- [x] Hero: **Disponible real**, colored cyan / amber / heat from the sign and a tightness threshold.
+- [x] Tap opens the dossier breakdown: Bank, Cash, − CC debt, − bills before next income, − loan installments before next income, − buckets in liquid, − buffer, = safe to spend.
+- [x] Next 14 days: income, bills, loan installments, card due dates, plus overdue commitments. Select a row to register it.
+- [x] Quick verbs: add expense, add income, open accounts, fixed payments, loans. Savings rule and share stay stubs until their phases.
 
 ### Calendar
 
-- [ ] Month view marks income, bills, and card due dates. Card due and statement dates are done.
+- [x] Month view marks income, bills, loan installments, and card dates, with a legend and month navigation. Registered events are dimmed.
 - [x] Tap a day for that day’s in and out.
 - [ ] Projected daily balance can be a flat “known events only” line until Phase 3.
 
 ### Calculations in this phase
 
-- [ ] Real Available matches the formula, including buffer and loan installments before next income.
+- [x] Real Available matches the formula, including buffer and loan installments before next income.
 - [x] Multiple cards sum into one CC reserve, and each card keeps its own due date.
-- [ ] Missing FX uses the last cached rate or asks. It never invents one.
+- [x] With foreign income on, missing FX uses the last cached rate or asks. It never invents one.
 
 **Done when:** A card expense, a cash expense, a bill, and a loan installment dated before next income all move Disponible real correctly, and the bank balance itself only moves for bank and cash.
 
@@ -297,37 +316,64 @@ AI jobs and share events are append-only.
 
 ### Buckets
 
-- [ ] Three grade cards: Emergency, Retirement, Travel. Balance, target, progress bar, rule history.
-- [ ] Manual add and withdraw. Withdraw asks for a reason and shows the impact on Real Available.
-- [ ] Bucket balances held in bank or cash count in `Virtual_Buckets_In_Liquid`.
+- [x] Three grade cards: Emergency, Retirement, Travel. Balance, target, progress bar, rule history.
+- [x] Manual add and withdraw. Withdraw asks for a reason and shows the impact on Real Available.
+- [x] Bucket balances held in bank or cash count in `Virtual_Buckets_In_Liquid`. A bucket pointed at a savings account is already outside liquid and does not count twice.
+- [x] Ajustes holds the buffer and the second-income split, then the income currency.
+
+### Custom buckets
+
+- [x] Create a bucket from Ahorro (“Nuevo apartado”): name, optional target, optional target date, and where it sits (bank or cash, or a savings account). Examples: Auto, Regalos, Predial, Mascota. Names are unique among active buckets.
+- [x] Custom buckets use `rule_type: custom` and show as grade cards after the three system buckets, with the same dossier: Apartar, Retirar, Mover, Editar, history.
+- [x] They count in `Virtual_Buckets_In_Liquid` exactly like the system buckets. No second money path.
+- [x] With a target date, the dossier shows how much to set aside per income event to arrive on time (paydays from recurring income, or one every 15 days without a schedule). A passed date with money missing shows what is left, neutrally.
+- [ ] Requirements row on that pace: needed per income vs what the last income actually set aside.
+- [x] Rename in place; history keeps the same `uuid`. Reorder custom cards (‹ ›); system buckets stay first.
+- [x] Archive only at a zero balance, like accounts. To archive a bucket with money, withdraw it first (with a reason) or move it to another bucket in one confirmed step that writes two moves (`source: bucket_transfer`, shared `transfer_id`). Archived buckets leave the cards and Inicio, and can be restored from Archivados.
+- [x] Moving between a liquid bucket and one in a savings account shows the Disponible real change before confirm.
+- [x] The three system buckets can be renamed and have their target changed, but not archived, because the income rules point at them.
+- [x] The first- and second-income rules keep their fixed targets for now.
+- [ ] Letting a rule send part of an income to a custom bucket is a later setting, and it goes through the same confirm step.
+- [ ] Payloads and share links carry the bucket name and amounts only.
 
 ### Add income
 
-- [ ] Enter days worked or a CAD amount. Day rate comes from settings.
-- [ ] Show `CAD × FX = MXN` before save. FX is editable per entry.
-- [ ] Choose account and date.
-- [ ] If this is the 1st or 2nd income event of the cycle, offer the matching rule. The user can skip.
+- [x] Default: one MXN amount, already converted. No currency, FX, or day-rate field.
+- [x] Choose account, type (Ingreso principal, Otros ingresos, Cobro de préstamo), and date.
+- [x] Foreign income is opt-in in Ajustes (“Recibo mi ingreso en”: Pesos, or Pesos y CAD). It stays off for new users.
+- [x] With it on, the form offers MXN or CAD. CAD takes a CAD amount, or days worked × day rate when a day rate is saved.
+- [x] Show `CAD × FX = MXN` before save. FX is editable per entry and stored with the row. `amount` is always the MXN that landed.
+- [x] Turning it off hides the fields but keeps saved rates. A CAD income already saved still edits in CAD.
+- [x] If this is the 1st or 2nd income event of the cycle, offer the matching rule. The user can skip.
+- [x] A manual income near an unrecorded scheduled payday (±10 days) offers “Pago programado”, preselecting the nearest one, so that payday stops showing as pending on Inicio and Tiempo. “No es un pago programado” is always an option.
 
 ### First-income rule
 
-- [ ] Ask: “¿Cuál es tu saldo real de banco ahora?”
-- [ ] Show the gap versus the calculated balance.
-- [ ] `Remainder = reconciled bank − most recent income`.
-- [ ] If remainder > 0, suggest a virtual transfer to Emergency and wait for confirm.
-- [ ] If remainder ≤ 0, skip with a neutral message. No shame copy.
+- [x] Ask for the real balance of the income account now, prefilled with the calculated one.
+- [x] Show the gap versus the calculated balance. Confirming saves it as an `adjustment`.
+- [x] `Remainder = reconciled liquid − most recent income − already in buckets − card reserve`.
+- [x] If remainder > 0, suggest a virtual transfer to Emergency (editable) and wait for confirm.
+- [x] If remainder ≤ 0, skip with a neutral message. No shame copy.
 
 ### Second-income rule
 
-- [ ] Reconcile bank balance the same way.
-- [ ] Compute retirement (default 20%) and travel (default 5,000 MXN, capped by what remains).
-- [ ] Subtract bills and CC reserve due before the next income.
-- [ ] If short, offer: lower retirement %, lower travel, skip, or move anyway.
-- [ ] Only confirmation writes the virtual transfers.
+- [x] Reconcile the balance the same way.
+- [x] Compute retirement (default 20% of the income) and travel (default 5,000 MXN, capped by what remains of the income).
+- [x] Check against Real Available after reconcile, which already subtracts bills, card reserve, loan installments, buckets, and buffer before the next income.
+- [x] If short, offer: edit either amount, “Ajustar a lo que alcanza” (travel drops first, then retirement), skip, or move anyway.
+- [x] Only confirmation writes the virtual transfers.
+
+### Rule history
+
+- [x] Every rule move is a `bucket_moves` row with its source and `income_tx_id`.
+- [x] Ahorro lists recent main incomes with their rule, what was moved, or **Sin aplicar** with an Aplicar verb. Skipping writes nothing, so a skipped income can be applied later.
+- [x] The same rule cannot run twice on one income. A second attempt shows what it already moved.
+- [x] **Regla de ahorro** in the add menu picks any recent income and either rule, for one payday a month or no schedule.
 
 ### Reconciliation
 
-- [ ] Weekly cash prompt: quick-add forgotten cash expenses.
-- [ ] Card payment larger than bank balance warns and offers a transfer from a bucket.
+- [x] Weekly cash prompt: a week after the last review, Inicio shows **Revisión de efectivo** per cash account with Anotar gasto (cash prefilled), Contar efectivo (the Ajustar saldo form, gap as an `adjustment`), and Está al día. A cash adjustment or `settings.cash_reviewed_at` counts as a review; a new cash account waits a week from its balance date.
+- [x] Card payment larger than bank balance warns (balance vs missing amount) and offers a transfer from a bucket held in a savings account, capped by the bucket and the account. The preview names both accounts, the bucket, and the rise in Disponible real; only **Confirmar transferencia** writes. One write saves the transfer (`bucket_id`) and the bucket withdrawal (`tx_id`). Such transfers are delete-only, and deleting one returns the money to the bucket.
 
 **Done when:** Both rules can be completed from an income save, declined cleanly, and replayed from bucket history.
 
@@ -339,17 +385,18 @@ AI jobs and share events are append-only.
 
 ### Budgets
 
-- [ ] Monthly limit per category, in MXN.
+- [ ] Monthly limit per category, in MXN. A category limit covers its subcategories.
+- [ ] Optional limit on a subcategory (for example, Cine inside Entretenimiento). It counts toward the parent limit, and it never raises it.
 - [ ] Show budgeted / spent / remaining, and percent of expected income.
 - [ ] Pace line: spending faster than income arrives, using the stat-bar pattern (cyan under pace, heat over pace).
-- [ ] Expected income uses a conservative FX scenario, not the last mid-month spike.
+- [ ] Expected income comes from recurring income items in MXN. With foreign income on, it uses a conservative FX scenario, not the last mid-month spike.
 
 ### Projections
 
 - [ ] Inputs: purchase amount, target date, optional “pay with card”.
 - [ ] Outputs: projected safe-to-spend on that date, shortfall or surplus, impact on the three buckets, impact on the next card payment.
-- [ ] Sliders: FX, days worked, extra expenses.
-- [ ] Three grade cards: Conservative / Base / Optimistic FX.
+- [ ] Sliders: expected income (MXN) and extra expenses. With foreign income on, also FX and days worked.
+- [ ] Three grade cards: Conservative / Base / Optimistic income. With foreign income on, the scenarios vary FX.
 - [ ] Requirements table: cost required vs projected available.
 - [ ] Daily projected balance on the calendar, driven by recurring items plus expected income events.
 - [ ] Save a scenario to `projection_scenarios`.
@@ -362,9 +409,9 @@ AI jobs and share events are append-only.
 - [ ] Grade cards: pay as scheduled / extra payment of X each income / pay off now. Each shows payoff date, interest paid, and the lowest Disponible real along the way.
 - [ ] “¿Puedo comprarlo?” includes future loan installments. A purchase that breaks an installment cycle names that date.
 - [ ] Taking a new loan is a scenario: amount, installment, term. The projection shows the new Disponible real per cycle and the new payoff date before anything is saved.
-- [ ] FX scenarios apply to CAD-denominated income, while MXN loan installments stay fixed.
+- [ ] Income scenarios move expected income only. MXN loan installments stay fixed. With foreign income on, FX scenarios apply to CAD income.
 
-**Done when:** A purchase dated three months out answers in one screen, changing FX scenario changes the surplus without a reload ritual, and a loan shows the Disponible real for each income cycle until its payoff date.
+**Done when:** A purchase dated three months out answers in one screen, changing the income scenario changes the surplus without a reload ritual, and a loan shows the Disponible real for each income cycle until its payoff date.
 
 ---
 
@@ -381,14 +428,33 @@ Stats and the price book are display modes on Movimientos: **Lista**, **Estadís
 Window chips use the section rail: ciclo de ingreso, mes, 3 meses, 12 meses.
 
 - [ ] Hero on Estadísticas: **Total gastado** in the selected window, tabular, `--cyan-bright`.
+- [ ] Stats count expenses only. Transfers, card payments, and `adjustment` rows never count as spending.
 - [ ] Spend by category (the expense type) as horizontal stat bars, longest bar at the top, amount and share labeled.
 - [ ] Spend over time as one cyan series (week buckets inside a month, month buckets inside a year). Amber draws the previous window only, for comparison.
 - [ ] A category over its Phase 3 budget uses `--heat` on that bar. Other categories stay cyan. No per-category rainbow.
 - [ ] Spend by payment method: bank, cash, credit card, three bars.
+- [ ] Tap a category bar that has subcategories to open its dossier: the same stat bars, one per subcategory, plus **Sin subcategoría** for spend booked on the parent. The bars sum to the parent total.
 - [ ] Tap a bar or a point to open the roster filtered to that type and those dates.
 - [ ] Income, transfers, and CC payments stay out of the expense series.
 - [ ] Refunds reduce the category total. They do not appear as income.
 - [ ] Empty window uses one dim footer sentence.
+
+### Subcategories
+
+Subcategories are optional detail inside a category, for example Cine, Streaming, and Conciertos under Entretenimiento. They label spend. They do not add a money layer and never change Disponible real.
+
+- [ ] A category may have subcategories one level deep. A subcategory cannot have its own children. Subcategories use the parent’s `kind`.
+- [ ] None are seeded. The user creates them from the category picker or from Ajustes, and the category stays usable without them.
+- [ ] The expense and income forms show one picker, with subcategories indented under their parent. Choosing the parent alone is valid and stays one tap.
+- [ ] `category_id` on a transaction, recurring item, item, or budget can point to a category or a subcategory. Totals for a category always include its subcategories.
+- [ ] Uncategorized cannot have subcategories.
+- [ ] Rename a subcategory in place. Its history keeps the same `uuid`.
+- [ ] Move a subcategory to another parent only after a preview that names how many movements change category totals.
+- [ ] Archive instead of delete when a subcategory has movements. Archived ones leave the picker and stay in history and stats. Deleting an empty one is allowed.
+- [ ] Deleting a subcategory with movements asks first, then reassigns those movements to the parent in the same write.
+- [ ] Roster filter by category includes its subcategories. A subcategory filter shows only that subcategory.
+
+**Example.** Entretenimiento 1,800 MXN this month: Cine 650, Streaming 900, Sin subcategoría 250. The Entretenimiento bar shows 1,800, and its dossier shows the three bars.
 
 ### Price book
 
@@ -409,7 +475,7 @@ A grocery trip can list products without using AI. Confirming a receipt later fi
 
 **Example.** Leche 1 L: 1 Sep Chedraui 28.50 MXN, 12 Sep Walmart 26.00 MXN. The dossier names Walmart as the cheaper recent place and plots both dates.
 
-**Done when:** A month of categorized expenses shows type bars and a time series, and two shops for the same item show different unit prices on the dates they were bought.
+**Done when:** A month of categorized expenses shows type bars and a time series, a category with subcategories breaks into bars that sum to its total, and two shops for the same item show different unit prices on the dates they were bought.
 
 ---
 
@@ -454,7 +520,7 @@ The app does not call an LLM. No API keys.
 
 ### P0 tasks
 
-- [ ] `parse_receipt` — date, merchant, total, currency, payment method, last4, category, items, confidence. Total must be > 0. Date must be valid and not far in the future. Category must match the local list or become Uncategorized. Item sum mismatch is a warning, not a block.
+- [ ] `parse_receipt` — date, merchant, total, currency, payment method, last4, category, items, confidence. Total must be > 0. Date must be valid and not far in the future. Category must match the local list or become Uncategorized. A subcategory must match one under that category, or the row falls back to the parent. The model never creates a category or a subcategory. Item sum mismatch is a warning, not a block.
 - [ ] On confirm, each parsed line becomes a `transaction_line`. Merchant maps to a place. A new item or place is created only after that confirm. Unit price feeds the Phase 4 dossier when qty and unit are present.
 - [ ] `parse_bank_statement` — account name, period, closing balance, transactions. Dedupe on date + amount + description. Flag possible duplicates and recurring-bill matches. User confirms the import.
 - [ ] Preview lists exactly which balances will change.
@@ -488,9 +554,9 @@ The app does not call an LLM. No API keys.
 - [ ] Same payload as Tier 1, rendered as a QR.
 - [ ] Over ~2,900 bytes, refuse and offer file export.
 
-### Tier 3 — `.puente` file
+### Tier 3 — `.guanabana` file
 
-- [ ] JSON → gzip → optional AES-GCM → download `.puente`.
+- [ ] JSON → gzip → optional AES-GCM → download `.guanabana`.
 - [ ] Import via file picker and, on the PWA, `file_handlers` / `launchQueue`.
 - [ ] This is the backup. Remind every 30 days.
 
@@ -514,7 +580,7 @@ Same six steps and the same envelope. Each task is a local template plus a valid
 
 - [ ] `parse_expense_text` — “Pagué 450 en Oxxo con tarjeta” prefills the expense form.
 - [ ] `categorize_transactions` — map existing rows to categories, preview, then apply.
-- [ ] `parse_income` — CAD, days, FX, MXN. Creating the income may offer the Phase 2 rule. The model does not run the rule.
+- [ ] `parse_income` — MXN amount and date from a deposit or payslip. With foreign income on, also CAD, days, and FX. Creating the income may offer the Phase 2 rule. The model does not run the rule.
 - [ ] `parse_cc_statement` — balance, due, minimum, transactions. Updates the card only after confirm, and refreshes CC reserve.
 
 ### P2
@@ -535,7 +601,8 @@ Ship only what is still needed after Phases 0–7.
 - [ ] CSV import through the same diff screen as statements.
 - [ ] Home-screen widget for Disponible real, if the shell supports it.
 - [ ] Recurring detection suggestions. They never auto-create bills.
-- [ ] CAD account that can hold a balance and convert on transfer.
+- [ ] Foreign-currency account (CAD first) that can hold a balance and convert on transfer, for users with foreign income on.
+- [ ] More foreign currencies (USD, EUR) behind the same setting, with the same per-entry FX rules.
 - [ ] Passcode and biometric lock.
 - [ ] P2P sync only if file + URL + QR are not enough: WebRTC data channel, manual signaling via fragment or QR, encrypted payloads, merge on `uuid` + `updated_at`. Not part of v1 acceptance.
 
@@ -545,22 +612,26 @@ Ship only what is still needed after Phases 0–7.
 
 These are requirements, not later nice-to-haves. Cover them in the phase that owns the math.
 
-- [ ] Negative first-income remainder skips with neutral copy.
-- [ ] Second income cannot fund 20% + 5,000: offer reduced amounts.
+- [x] Negative first-income remainder skips with neutral copy.
+- [x] Second income cannot fund 20% + 5,000: offer reduced amounts.
 - [ ] Card payment larger than the bank: warn, offer a bucket transfer.
 - [ ] Forgotten cash: quick add plus a weekly reconcile prompt.
-- [ ] FX change mid-cycle: projections use the selected scenario.
+- [ ] FX change mid-cycle (foreign income on): projections use the selected scenario.
+- [x] User paid only in MXN: no currency, FX, or day-rate field appears.
 - [ ] Several cards: one combined reserve, separate due dates.
 - [ ] Card refund: lower card debt, do not book income.
-- [ ] Bucket withdrawal: reason and impact before write.
+- [x] Bucket withdrawal: reason and impact before write.
 - [ ] Model invents a merchant or amount: user still confirms.
 - [ ] Duplicate paste: same `response_hash` asks.
 - [ ] Negative expense amount: treat as a refund.
-- [ ] FX missing: last known rate or ask.
+- [x] FX missing (foreign income on): last known rate or ask.
 - [ ] Unknown category: Uncategorized.
+- [ ] Unknown subcategory: keep the parent category. Do not create one without confirm.
+- [ ] Subcategory deleted with movements: ask, then move them to the parent. Parent totals do not change.
+- [ ] Subcategory budget above the parent budget: warn. The parent limit still governs.
 - [ ] Partial JSON: repair loop, no partial write.
 - [ ] Sensitive prompt: warn before copy.
-- [ ] Share payload too big: offer `.puente`.
+- [ ] Share payload too big: offer `.guanabana`.
 - [ ] Bucket or settings conflict on import: always ask.
 - [ ] Item names almost match: ask, do not auto-merge.
 - [ ] Qty missing on a grocery line: keep the spend on the expense, omit unit price from the chart.
@@ -601,6 +672,7 @@ Run this for every feature after Phase 0.
 - [ ] Ticket and statement bridge are usable weekly once Phase 5 ships.
 - [ ] At least one fragment, QR, or file round-trip works each month once Phase 6 ships.
 - [ ] Estadísticas shows which expense type grew versus the previous window.
+- [ ] A subcategory total (for example, Cine this month) is two taps from Estadísticas.
 - [ ] Each loan answers “what is my Disponible real until it is paid off, and on what date does it end?” on one screen.
 - [ ] The price dossier answers where an item was cheaper, and on which date, without leaving the item.
 - [ ] Inicio answers “can I spend this?” before the purchase, not after.
