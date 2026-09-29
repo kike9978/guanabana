@@ -1,0 +1,25 @@
+---
+description: This project runs on Bun for installs, scripts, and one-off binaries
+alwaysApply: true
+---
+
+# Bun runtime
+
+This project uses Bun as its package manager and script runner. `bun.lock` is the lockfile.
+
+- Install dependencies with `bun install`.
+- Add or remove packages with `bun add` and `bun remove`.
+- Run package scripts with `bun run <script>` (`dev`, `build`, `lint`, `preview`).
+- Run one-off binaries with `bunx`.
+
+```bash
+# Install and run
+bun install
+bun run dev
+
+# Add a dependency
+bun add zod
+bun add -d vitest
+```
+
+Do not use npm, yarn, pnpm, npx, or their lockfiles.
