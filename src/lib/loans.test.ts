@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
 import { slotDays } from './incomeRules'
-import { buildSchedule, editOpenRows, incomeDueDates, isUnscheduled, outstanding, planExtraPayment, summarizeLoan } from './loans'
+import { buildSchedule, editOpenRows, incomeDueDates, incomePaydayDates, incomePeriodsPerYear, isUnscheduled, loanStatusAfterPayment, outstanding, periodsFromDates, planExtraPayment, summarizeLoan } from './loans'
 
 const base = { updated_at: '2026-09-01T00:00:00.000Z' }
 
@@ -163,6 +163,32 @@ describe('installments tied to income events', () => {
     const both = { ...input, interest: 'fixed_rate' as const, rate_annual: 24, income_slot: 'both' as const }
     expect(buildSchedule(both, [15, 30])[0].interest_part).toBe(120)
     expect(buildSchedule({ ...both, income_slot: 'first' }, [15])[0].interest_part).toBe(240)
+  })
+
+  test('weekly paydays alternate and a rate splits by 26 or 52', () => {
+    const friday = { uuid: 'p', type: 'income', active: true, frequency: 'weekly', interval: 1, start_date: '2026-09-04', due_day: 4 } as RecurringItem
+    expect(incomePaydayDates([friday], 'both', '2026-10-01', 3)).toEqual(['2026-10-02', '2026-10-09', '2026-10-16'])
+    expect(incomePaydayDates([friday], 'first', '2026-10-01', 2)).toEqual(['2026-10-02', '2026-10-16'])
+    expect(incomePaydayDates([friday], 'second', '2026-10-01', 2)).toEqual(['2026-10-09', '2026-10-23'])
+    expect(incomePeriodsPerYear([friday], 'both')).toBe(52)
+    expect(incomePeriodsPerYear([friday], 'first')).toBe(26)
+    const everyOther = { ...friday, interval: 2, start_date: '2026-10-09' }
+    expect(incomePaydayDates([everyOther], 'both', '2026-10-01', 2)).toEqual(['2026-10-09', '2026-10-23'])
+    expect(incomePeriodsPerYear([everyOther], 'both')).toBe(26)
+    expect(incomePeriodsPerYear([everyOther], 'second')).toBe(13)
+
+    const input = { ...loan, frequency: 'per_income' as const, income_slot: 'both' as const, interest: 'fixed_rate' as const, rate_annual: 24, first_due_date: '2026-10-01', installment_count: 2 }
+    const plan = { dates: incomePaydayDates([friday], 'both', input.first_due_date, 2), periodsPerYear: 52 }
+    expect(buildSchedule(input, plan).map((row) => row.due_date)).toEqual(plan.dates)
+    expect(buildSchedule(input, plan)[0].interest_part).toBe(55.38)
+    expect(periodsFromDates(plan.dates, 12)).toBe(52)
+  })
+
+  test('paying the balance off marks the loan paid, and undoing it reopens the loan', () => {
+    expect(loanStatusAfterPayment('active', 0)).toBe('paid')
+    expect(loanStatusAfterPayment('paid', 400)).toBe('active')
+    expect(loanStatusAfterPayment('written_off', 0)).toBe('written_off')
+    expect(loanStatusAfterPayment('paused', 0)).toBe('paused')
   })
 
   test('slot days follow the paydays sorted by day', () => {

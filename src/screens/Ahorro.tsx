@@ -19,6 +19,7 @@ import {
   setBucketArchived,
   swapBucketOrder,
   transferBetweenBuckets,
+  transferWithBuckets,
   undoOpeningWithdrawal,
   updateBucket,
   withdrawFromBucket,
@@ -240,24 +241,56 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
   const [toId, setToId] = useState(others[0]?.uuid ?? '')
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
+  const [liquidId, setLiquidId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const balance = reservedBalance(bucket, data.bucketMoves)
   const opening = openingBalance(bucket.uuid, data.bucketMoves)
   const to = others.find((b) => b.uuid === toId)
   const value = parseAmount(amount)
-  const fromLiquid = isHeldInLiquid(bucket, data.accounts)
-  const toLiquid = to ? isHeldInLiquid(to, data.accounts) : fromLiquid
-  const impact = value === null || fromLiquid === toLiquid ? 0 : toLiquid ? -value : value
+  const fromHome = homeAccount(bucket, data.accounts)
+  const toHome = to ? homeAccount(to, data.accounts) : undefined
+  const crosses = Boolean(to) && fromHome?.uuid !== toHome?.uuid && Boolean(fromHome || toHome)
+  const liquidOptions = selectable(data.accounts).filter(isLiquid).map((account) => ({ value: account.uuid, label: account.name }))
+  const liquid = pickValid(liquidId, liquidOptions)
+  const fromAccount = fromHome ?? (crosses && !fromHome ? data.accounts.find((account) => account.uuid === liquid) : undefined)
+  const toAccount = toHome ?? (crosses && !toHome ? data.accounts.find((account) => account.uuid === liquid) : undefined)
+  const needsLiquid = crosses && (!fromHome || !toHome)
+  const now = new Date()
+  const before = moneySnapshot(data, now).breakdown.total
+  const previewMoves = to && value !== null && value > 0
+    ? [
+        ...data.bucketMoves,
+        { uuid: 'preview-from', updated_at: '', bucket_id: bucket.uuid, amount: -value, date: '2026-01-01', reason: '', source: 'manual' as const },
+        { uuid: 'preview-to', updated_at: '', bucket_id: to.uuid, amount: value, date: '2026-01-01', reason: '', source: 'manual' as const },
+      ]
+    : data.bucketMoves
+  const previewAccounts = fromAccount && toAccount && value !== null
+    ? data.accounts.map((account) => {
+        if (account.uuid === fromAccount.uuid) return { ...account, current_balance: roundMoney(account.current_balance - value) }
+        if (account.uuid === toAccount.uuid) return { ...account, current_balance: roundMoney(account.current_balance + value) }
+        return account
+      })
+    : data.accounts
+  const after = crosses && fromAccount && toAccount && value !== null
+    ? moneySnapshot({ ...data, accounts: previewAccounts, bucketMoves: previewMoves }, now).breakdown.total
+    : before
+  const short = Boolean(fromAccount && value !== null && value > fromAccount.current_balance)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!to) return setError('Elige a qué apartado lo mueves.')
     if (value === null || value <= 0) return setError('Escribe un monto mayor a cero.')
     if (value > balance) return setError(opening > 0 ? `Puedes mover ${money(balance)}. El resto no está en tus cuentas.` : `El apartado tiene ${money(balance)}.`)
+    if (crosses && (!fromAccount || !toAccount)) return setError('Elige la cuenta de banco o efectivo.')
+    const note = reason.trim() || `De ${bucket.name} a ${to.name}`
     setSaving(true)
     try {
-      await transferBetweenBuckets(bucket, to, value, reason.trim() || `De ${bucket.name} a ${to.name}`)
+      if (crosses && fromAccount && toAccount) {
+        await transferWithBuckets({ from: fromAccount, to: toAccount, amount: value, notes: note, reason: note, fromBucket: bucket, toBucket: to })
+      } else {
+        await transferBetweenBuckets(bucket, to, value, note)
+      }
       onDone()
     } catch {
       setError('No se pudo guardar. Intenta de nuevo.')
@@ -268,16 +301,22 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
   return (
     <form className="form" onSubmit={submit} noValidate>
       <SelectField label="A" value={toId} onChange={setToId} options={others.map((b) => ({ value: b.uuid, label: b.name }))} />
+      {needsLiquid && liquidOptions.length > 0 && (
+        <SelectField label={fromHome ? 'Entra a' : 'Sale de'} value={liquid ?? ''} onChange={setLiquidId} options={liquidOptions} />
+      )}
       <AmountField label="Monto (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
       <TextField label="Nota" value={reason} onChange={setReason} placeholder="Opcional" />
       <div className="readout">
-        <span className="dim">Cambio en Disponible real</span>
-        <span className="mono">{`${impact > 0 ? '+' : ''}${money(impact)}`}</span>
+        <span className="dim">Disponible real</span>
+        <span className="mono">{before === after ? money(before) : `${money(before)} → ${money(after)}`}</span>
       </div>
       <FieldNote>
-        Mover entre apartados no cambia tu banco. Se guarda como dos movimientos en el historial.
+        {crosses && fromAccount && toAccount
+          ? `Se transfieren de ${fromAccount.name} a ${toAccount.name}, y el apartado pasa de ${bucket.name} a ${to?.name}.`
+          : 'Mover entre apartados no cambia tu banco. Se guarda como dos movimientos en el historial.'}
         {opening > 0 ? ` ${money(opening)} no están en tus cuentas; para moverlos, márcalos con Ya está en mi banco.` : ''}
       </FieldNote>
+      {short && fromAccount && <FieldNote>{`${fromAccount.name} tiene ${money(fromAccount.current_balance)}, menos que este monto. Se guarda igual.`}</FieldNote>}
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel="Mover" saving={saving} onCancel={onDone} />
     </form>

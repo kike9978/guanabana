@@ -74,6 +74,23 @@ export function msiPendingByCard(transactions: Transaction[], cards: CreditCard[
   return pending
 }
 
+/**
+ * A partial refund shortens the plan from the last charge. Covering the whole purchase deletes it.
+ * Returns null when there is nothing to shorten.
+ */
+export function shortenMsi(purchase: MsiPurchase, refund: number): { amount: number; months: number } | 'delete' | null {
+  if (!(refund > 0) || purchase.months < 2 || !(purchase.amount > 0)) return null
+  if (refund >= purchase.amount) return 'delete'
+  const charges = msiAmounts(purchase.amount, purchase.months)
+  let covered = 0
+  let drop = 0
+  for (let index = charges.length - 1; index >= 1 && covered < refund; index--) {
+    covered += charges[index]
+    drop += 1
+  }
+  return { amount: roundMoney(purchase.amount - refund), months: Math.max(1, purchase.months - drop) }
+}
+
 /** What the card asks for now: the balance without MSI charges still to come. */
 export function payableBalance(card: CreditCard, pending: Record<string, number>): number {
   return roundMoney(Math.max(0, card.current_balance - (pending[card.uuid] ?? 0)))

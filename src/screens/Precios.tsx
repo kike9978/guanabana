@@ -14,6 +14,7 @@ import {
   observationsOf,
   placeName,
   priceRoster,
+  refundTransactionIds,
   RECENT_DAYS,
   type PriceObservation,
   type PriceRow,
@@ -32,7 +33,7 @@ function lastPriceLabel(row: PriceRow): string {
 }
 
 function ItemDossier({ row, data, onClose }: { row: PriceRow; data: MoneyData; onClose: () => void }) {
-  const observations = observationsOf(row.item.uuid, data.lines, data.places)
+  const observations = observationsOf(row.item.uuid, data.lines, data.places, refundTransactionIds(data.transactions))
   const families = [...new Set(observations.map((o) => o.family))]
   const [family, setFamily] = useState<UnitFamily | null>(row.last?.family ?? families[0] ?? null)
   const [placeFilter, setPlaceFilter] = useState(ALL_PLACES)
@@ -143,7 +144,7 @@ export function Precios({ header, data }: { header: ReactNode; data: MoneyData }
   const [selected, setSelected] = useState<string | null>(null)
   const dossierRef = useDossierSheet(selected, () => setSelected(null))
   const [query, setQuery] = useState('')
-  const roster = priceRoster(data.items, data.lines, data.places)
+  const roster = priceRoster(data.items, data.lines, data.places, refundTransactionIds(data.transactions))
   const needle = normalizeName(query)
   const rows = needle ? roster.filter((row) => row.item.normalized_name.includes(needle)) : roster
   const selectedRow = roster.find((row) => row.item.uuid === selected)

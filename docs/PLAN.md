@@ -276,10 +276,10 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] **Actualizar saldo** on an Ahorro account with apartados: the real balance, the gap as Rendimientos or Ajuste, and one editable line per apartado, prefilled in proportion to its balance (in cents; the remainder goes to the largest). What is not assigned stays Sin apartar. A line cannot take an apartado below zero. One write saves the `adjustment` and a `manual` move per line (`tx_id`); deleting the adjustment reverses them. Interest is not income.
 - [x] Each account stores type, currency, and current balance.
 - [x] Credit cards: name, limit, balance, statement day, due day, strategy (`full` default).
-- [ ] Every strategy reserves the whole card balance (minus unbilled MSI). Saldo al corte and Pago mínimo only change the next payment.
-- [ ] Next payment per card: Saldo al corte shows what the last statement billed minus credits since; Pago mínimo shows the minimum entered for that cut. The Disponible real breakdown, the card roster and dossier, and Próximos 14 días show “vence el …” and “pasa al siguiente corte”. Amounts, not percentages.
-- [ ] Optional “Saldo al último corte” and “Pago mínimo de este corte” on the card form, tied to the last cut. Editing shows the previous value. Empty or older figures fall back to the computed statement.
-- [ ] The card-payment form suggests the statement amount and the minimum when they apply, and still allows the total.
+- [x] Every strategy reserves the whole card balance (minus unbilled MSI). Saldo al corte and Pago mínimo only change the next payment.
+- [x] Next payment per card: Saldo al corte shows what the last statement billed minus credits since; Pago mínimo shows the minimum entered for that cut. The Disponible real breakdown, the card roster and dossier, and Próximos 14 días show “vence el …” and “pasa al siguiente corte”. Amounts, not percentages.
+- [x] Optional “Saldo al último corte” and “Pago mínimo de este corte” on the card form, tied to the last cut. Editing shows the previous value. Empty or older figures fall back to the computed statement.
+- [x] The card-payment form suggests the statement amount and the minimum when they apply, and still allows the total.
 - [x] Account chips on Inicio use the section-rail pattern and show a count or balance.
 - [x] Edit and archive accounts and cards. Editing changes details only (name, bank ↔ cash, card limit, days, strategy); balances change only through Ajustar saldo. Archiving needs a zero balance; archived records leave the pickers and keep their history.
 
@@ -316,18 +316,18 @@ AI jobs, share events, and bucket moves are append-only.
 
 Bills and income can repeat on a weekday or every few months, not only on one day of every month. Example: “Cada viernes”, “Cada 2 viernes”, “Cada 2 meses, día 10” (CFE), “Cada año, 31 ene” (predial). This changes only when occurrences fall. Each occurrence still reserves, registers, and projects exactly like a monthly one.
 
-- [ ] **Se repite** on the Pagos fijos form: Cada semana, Cada 2 semanas, Cada 3 semanas, Cada 4 semanas, Cada mes (default), Cada 2 meses, Cada 3 meses, Cada 6 meses, Cada año. Weekly options ask for the weekday. Monthly options keep **Día del mes**.
-- [ ] Every 2 to 4 weeks, and every 2 or more months, needs a starting point. The form offers the next matching dates (“¿Cuál viernes es el próximo? 2 oct · 9 oct”), or the next months for a monthly day, and saves the choice as `start_date`. Weeks and months are counted from that date.
-- [ ] A preview under the field lists the next three dates before saving.
-- [ ] The roster row says the rule in words: “Cada viernes”, “Cada 2 viernes · próximo 9 oct”, “Día 15 de cada mes”, “Cada 2 meses · día 10”. Day 29–31 clamps to short months and reads “Último día” when it is 31.
-- [ ] Income repeats weekly (every 1 to 4 weeks) or monthly only. Longer repeats are for bills, so an income cycle is never longer than a month.
-- [ ] One occurrence helper in `src/lib/cycle.ts` drives the income cycle, bill commitments, Tiempo, Próximos 14 días, and the projection. No second schedule path.
-- [ ] A weekly bill can fall more than once in a cycle. Every unpaid occurrence before the next income reserves, and each registers on its own (`occurrence` is the date).
-- [ ] Monthly income equivalent for sliders, scenarios, and budget percent = amount × occurrences per year ÷ 12 (weekly 52, every 2 weeks 26). The projection engine uses the real dates, so a month with five Fridays gets five paydays.
-- [ ] Pago programado matches within half the interval for weekly repeats (±3 days weekly, ±7 every 2 weeks) and keeps ±10 days for monthly.
-- [ ] Editing the repeat applies from the next occurrence. Registered occurrences keep their link. Before saving, the edit lists any overdue unregistered occurrence under the old rule and asks to register it first or let it go, and shows the change in Disponible real. It never drops a reserve without asking.
-- [ ] Existing rows read as `frequency: monthly`, `interval: 1`, so nothing moves on upgrade.
-- [ ] Loans paid **Por ingreso** follow weekly paydays too. Until then, “Por ingreso” only offers day-of-month paydays.
+- [x] **Se repite** on the Pagos fijos form: Cada semana, Cada 2 semanas, Cada 3 semanas, Cada 4 semanas, Cada mes (default), Cada 2 meses, Cada 3 meses, Cada 6 meses, Cada año. Weekly options ask for the weekday. Monthly options keep **Día del mes**.
+- [x] Every 2 to 4 weeks, and every 2 or more months, needs a starting point. The form offers the next matching dates (“¿Cuál viernes es el próximo? 2 oct · 9 oct”), or the next months for a monthly day, and saves the choice as `start_date`. Weeks and months are counted from that date.
+- [x] A preview under the field lists the next three dates before saving.
+- [x] The roster row says the rule in words: “Cada viernes”, “Cada 2 viernes · próximo 9 oct”, “Día 15 de cada mes”, “Cada 2 meses · día 10”. Day 29–31 clamps to short months and reads “Último día” when it is 31.
+- [x] Income repeats weekly (every 1 to 4 weeks) or monthly only. Longer repeats are for bills, so an income cycle is never longer than a month.
+- [x] One occurrence helper in `src/lib/cycle.ts` drives the income cycle, bill commitments, Tiempo, Próximos 14 días, and the projection. No second schedule path.
+- [x] A weekly bill can fall more than once in a cycle. Every unpaid occurrence before the next income reserves, and each registers on its own (`occurrence` is the date).
+- [x] Monthly income equivalent for sliders, scenarios, and budget percent = amount × occurrences per year ÷ 12 (weekly 52, every 2 weeks 26). The projection engine uses the real dates, so a month with five Fridays gets five paydays.
+- [x] Pago programado matches within half the interval for weekly repeats (±3 days weekly, ±7 every 2 weeks) and keeps ±10 days for monthly.
+- [x] Editing the repeat applies from the next occurrence. Registered occurrences keep their link. Before saving, the edit lists any overdue unregistered occurrence under the old rule and asks to register it first or let it go, and shows the change in Disponible real. It never drops a reserve without asking.
+- [x] Existing rows read as `frequency: monthly`, `interval: 1`, so nothing moves on upgrade.
+- [x] Loans paid **Por ingreso** follow weekly paydays too.
 
 ### One-time bills
 
@@ -344,15 +344,15 @@ A bill that does not repeat: a tax invoice, a one-off fee. It is still a bill. `
 
 Recurring items are never registered automatically. Each occurrence stays a reserve until the user opens it and saves the prefilled form. When one occurrence is known to differ (this month's CFE is 1,340, not 900), the user can change that reserve ahead of time without touching the item's usual amount.
 
-- [ ] **Ajustar este pago** on an unregistered bill occurrence from today on (Próximos 14 días and the Tiempo day panel) asks for the amount of that date only. It shows the usual amount, the new one, and the change in Disponible real before confirm.
-- [ ] Confirm writes one `recurring_overrides` row keyed by `recurring_id` + `occurrence`. It writes no transaction and moves no balance. Only the reserve for that date changes.
-- [ ] The override feeds the same commitment path: Bills_Before_Next_Income, Tiempo, Próximos 14 días, and the projection use it instead of the item amount. No second money path.
-- [ ] Registering that occurrence prefills the form with the override. The saved amount is still what the user types.
-- [ ] An item without a usual amount can get an override, so one occurrence of a variable bill reserves while the others do not.
-- [ ] Rows with an override show both amounts (“1,340 MXN · normalmente 900”). **Quitar ajuste** restores the usual amount after the same preview.
-- [ ] An override of 0 is allowed and reads “Sin cargo este periodo”. It reserves nothing and stays pending until registered or the ajuste is removed.
-- [ ] Editing the item's usual amount never changes existing overrides. Editing its repeat lists overrides on dates that no longer occur and asks before dropping them.
-- [ ] Past or registered occurrences cannot be adjusted. The registered movement is the record.
+- [x] **Ajustar este pago** on an unregistered bill occurrence from today on (Próximos 14 días and the Tiempo day panel) asks for the amount of that date only. It shows the usual amount, the new one, and the change in Disponible real before confirm.
+- [x] Confirm writes one `recurring_overrides` row keyed by `recurring_id` + `occurrence`. It writes no transaction and moves no balance. Only the reserve for that date changes.
+- [x] The override feeds the same commitment path: Bills_Before_Next_Income, Tiempo, Próximos 14 días, and the projection use it instead of the item amount. No second money path.
+- [x] Registering that occurrence prefills the form with the override. The saved amount is still what the user types.
+- [x] An item without a usual amount can get an override, so one occurrence of a variable bill reserves while the others do not.
+- [x] Rows with an override show both amounts (“1,340 MXN · normalmente 900”). **Quitar ajuste** restores the usual amount after the same preview.
+- [x] An override of 0 is allowed and reads “Sin cargo este periodo”. It reserves nothing and stays pending until registered or the ajuste is removed.
+- [x] Editing the item's usual amount never changes existing overrides. Editing its repeat lists overrides on dates that no longer occur and asks before dropping them.
+- [x] Past or registered occurrences cannot be adjusted. The registered movement is the record.
 
 ### Adjust one income occurrence
 
@@ -476,11 +476,11 @@ Apartar reserves pesos that already sit in Banco, Efectivo, or Saldo sin origen,
 - [x] Ahorro lists recent main incomes with their rule, what was moved, or **Sin aplicar** with an Aplicar verb. Skipping writes nothing, so a skipped income can be applied later.
 - [x] The same rule cannot run twice on one income. A second attempt shows what it already moved.
 - [x] **Regla de ahorro** in the add menu picks any recent income and either rule, for one payday a month or no schedule.
-- [ ] **Regla pendiente** on Inicio: a main income in the current cycle that could run a rule and has none applied shows one row with the income, its date, and the rule (1er or 2º ingreso). Same panel pattern as Revisión de efectivo.
-- [ ] **Aplicar** opens the rule wizard for that income. The wizard is unchanged: reconcile, editable amounts, confirm. The prompt itself never writes a move.
-- [ ] **Ahora no** hides the prompt until the next payday by saving `settings.rule_prompt_dismissed_at`. It writes no bucket move, so the income stays **Sin aplicar** in Ahorro and can still be applied from there or from the add menu.
-- [ ] The prompt clears on its own once the rule runs, or when the income is edited out of the main income category or deleted. An income from an earlier cycle does not show on Inicio; it stays in the Ahorro history.
-- [ ] Copy is neutral: “Tu ingreso del 15 sep aún no tiene regla.” No count of skipped incomes, no warning color.
+- [x] **Regla pendiente** on Inicio: a main income in the current cycle that could run a rule and has none applied shows one row with the income, its date, and the rule (1er or 2º ingreso). Same panel pattern as Revisión de efectivo.
+- [x] **Aplicar** opens the rule wizard for that income. The wizard is unchanged: reconcile, editable amounts, confirm. The prompt itself never writes a move.
+- [x] **Ahora no** hides the prompt until the next payday by saving `settings.rule_prompt_dismissed_at`. It writes no bucket move, so the income stays **Sin aplicar** in Ahorro and can still be applied from there or from the add menu.
+- [x] The prompt clears on its own once the rule runs, or when the income is edited out of the main income category or deleted. An income from an earlier cycle does not show on Inicio; it stays in the Ahorro history.
+- [x] Copy is neutral: “Tu ingreso del 15 sep aún no tiene regla.” No count of skipped incomes, no warning color.
 
 ### Reconciliation
 
@@ -761,22 +761,22 @@ Ship only what is still needed after Phases 0–7.
 These are requirements, not later nice-to-haves. Cover them in the phase that owns the math.
 
 - [x] Negative first-income remainder skips with neutral copy.
-- [ ] Rule wizard closed without confirming: nothing is written, and Inicio shows Regla pendiente until the rule runs, the user taps Ahora no, or the next payday arrives.
+- [x] Rule wizard closed without confirming: nothing is written, and Inicio shows Regla pendiente until the rule runs, the user taps Ahora no, or the next payday arrives.
 - [x] Second income cannot fund 20% + 5,000: offer reduced amounts.
 - [x] Card payment larger than the bank: warn, offer a bucket transfer.
 - [x] Forgotten cash: quick add plus a weekly reconcile prompt.
 - [x] User paid in another currency: enters the MXN that landed. No currency or exchange-rate field appears.
 - [x] Several cards: one combined reserve, separate due dates.
-- [ ] Card refund: lower card debt, do not book income.
+- [x] Card refund: lower card debt, do not book income.
 - [x] MSI paid early: card debt drops below the unbilled charges; the reserve stays at zero, never negative.
-- [ ] MSI purchase refunded or cancelled: the user edits or deletes the purchase; a partial refund on an MSI plan asks whether it shortens the plan.
-- [ ] Card cut day changes: MSI charges follow the new day. Reconcile against the statement if the bank kept the old schedule.
+- [x] MSI purchase refunded or cancelled: the user edits or deletes the purchase; a partial refund on an MSI plan asks whether it shortens the plan.
+- [x] Card cut day changes: MSI charges follow the new day. Reconcile against the statement if the bank kept the old schedule.
 - [x] Bucket withdrawal: reason and impact before write.
 - [x] Fijar saldo below the amount already reserved from liquid: refuse, and name that amount. Releasing it is Retirar.
 - [x] Fijar saldo on an apartado that sits in a savings account: Disponible real stays the same either way. The verb still sets the total instead of adding to it.
 - [x] Model invents a merchant or amount: user still confirms.
 - [x] Duplicate paste: same `response_hash` asks.
-- [ ] Negative expense amount: treat as a refund.
+- [x] Negative expense amount: treat as a refund.
 - [x] Unknown category: Uncategorized.
 - [x] Unknown subcategory: keep the parent category. Do not create one without confirm.
 - [x] Subcategory deleted with movements: ask, then move them to the parent. Parent totals do not change.
@@ -785,24 +785,24 @@ These are requirements, not later nice-to-haves. Cover them in the phase that ow
 - [x] Sensitive prompt: warn before copy.
 - [ ] Share payload too big: offer `.guanabana`.
 - [ ] Bucket or settings conflict on import: always ask.
-- [ ] Item names almost match: ask, do not auto-merge.
-- [ ] Qty missing on a grocery line: keep the spend on the expense, omit unit price from the chart.
-- [ ] Mixed units on one item: separate series.
-- [ ] Refund of a grocery line: lower the expense total, do not plot it as a cheaper price.
-- [ ] Weekly bill with two unpaid occurrences in one cycle: both reserve, both show on Próximos 14 días, and registering one leaves the other pending.
-- [ ] Payday every 2 weeks lands three times in one month: the projection counts three, and the monthly equivalent stays amount × 26 ÷ 12.
-- [ ] Bill every 2 months on day 31: clamps to the last day of short months and keeps counting months from `start_date`.
-- [ ] Repeat changed with an overdue occurrence: ask before letting it go. Disponible real never jumps silently.
-- [ ] Occurrence adjusted, then paid a different amount: the movement keeps what was typed, the override stops reserving, and nothing asks to reconcile.
-- [ ] Occurrence adjusted to 0 and later charged anyway: registering it still works, with the amount typed.
+- [x] Item names almost match: ask, do not auto-merge.
+- [x] Qty missing on a grocery line: keep the spend on the expense, omit unit price from the chart.
+- [x] Mixed units on one item: separate series.
+- [x] Refund of a grocery line: lower the expense total, do not plot it as a cheaper price.
+- [x] Weekly bill with two unpaid occurrences in one cycle: both reserve, both show on Próximos 14 días, and registering one leaves the other pending.
+- [x] Payday every 2 weeks lands three times in one month: the projection counts three, and the monthly equivalent stays amount × 26 ÷ 12.
+- [x] Bill every 2 months on day 31: clamps to the last day of short months and keeps counting months from `start_date`.
+- [x] Repeat changed with an overdue occurrence: ask before letting it go. Disponible real never jumps silently.
+- [x] Occurrence adjusted, then paid a different amount: the movement keeps what was typed, the override stops reserving, and nothing asks to reconcile.
+- [x] Occurrence adjusted to 0 and later charged anyway: registering it still works, with the amount typed.
 - [x] Income adjusted to 0 and paid anyway: registering it still works, and the 1st or 2nd rule is offered on the amount typed.
 - [x] Income adjusted up and paid less: the projection moves to the typed amount, and the copy stays neutral.
-- [ ] Missed loan installment: mark it late, keep it in the next cycle’s reserve, and use neutral copy.
-- [ ] Installment larger than a cycle’s income: warn on the timeline, and offer a bucket transfer or a scenario with an extra payment later.
-- [ ] Mover between apartados that live in different accounts (one in GBM, one in bank or another Ahorro account) moves only the apartados, not the account money. Pair it with a transfer or limit it to the same account.
-- [ ] Changing an account's type after creation (bank or cash ↔ Ahorro o inversión), with the Disponible real change before confirm.
-- [ ] Lender changes the rate or schedule: edit the remaining schedule only. Paid rows never change.
-- [ ] Loan paid early: status becomes `paid`, the remaining scheduled rows are removed after confirm, and the timeline updates.
+- [x] Missed loan installment: mark it late, keep it in the next cycle’s reserve, and use neutral copy.
+- [x] Installment larger than a cycle’s income: warn on the timeline, and offer a bucket transfer or a scenario with an extra payment later.
+- [x] Mover between apartados that live in different accounts (one in GBM, one in bank or another Ahorro account) moves only the apartados, not the account money. Pair it with a transfer or limit it to the same account.
+- [x] Changing an account's type after creation (bank or cash ↔ Ahorro o inversión), with the Disponible real change before confirm.
+- [x] Lender changes the rate or schedule: edit the remaining schedule only. Paid rows never change.
+- [x] Loan paid early: status becomes `paid`, the remaining scheduled rows are removed after confirm, and the timeline updates.
 - [x] Money lent is never repaid: the user can write it off (**Dar por perdido**). The money already left with the disbursement, so no balance changes.
 - [x] Lent money repaid in part, then written off: the collected income stays, and only the unpaid rows stop showing.
 - [x] Lent loan saved without the disbursement (“Ya lo registré”): no second expense is written, and each **Registrar cobro** still adds income.
@@ -830,15 +830,15 @@ Run this for every feature after Phase 0.
 
 - [ ] Expenses can be logged in under 15 seconds (the habit target is ≥ 4 times a week).
 - [ ] Real Available stays within about 5% of bank − card − bills when the user reconciles.
-- [ ] Both income rules finish without the user doing the arithmetic.
-- [ ] “Can I buy X in 3 months?” resolves on one screen, comfortably under 30 seconds.
+- [x] Both income rules finish without the user doing the arithmetic.
+- [x] “Can I buy X in 3 months?” resolves on one screen, comfortably under 30 seconds.
 - [ ] Ticket and statement bridge are usable weekly once Phase 5 ships.
 - [ ] At least one fragment, QR, or file round-trip works each month once Phase 6 ships.
-- [ ] Estadísticas shows which expense type grew versus the previous window.
+- [x] Estadísticas shows which expense type grew versus the previous window.
 - [x] A subcategory total (for example, Cine this month) is two taps from Estadísticas.
-- [ ] Each loan answers “what is my Disponible real until it is paid off, and on what date does it end?” on one screen.
-- [ ] The price dossier answers where an item was cheaper, and on which date, without leaving the item.
-- [ ] Inicio answers “can I spend this?” before the purchase, not after.
+- [x] Each loan answers “what is my Disponible real until it is paid off, and on what date does it end?” on one screen.
+- [x] The price dossier answers where an item was cheaper, and on which date, without leaving the item.
+- [x] Inicio answers “can I spend this?” before the purchase, not after.
 
 ---
 

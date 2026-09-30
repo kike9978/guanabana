@@ -121,6 +121,9 @@ export function ExtraPaymentForm({ loan, data, onDone }: { loan: Loan; data: Mon
           )}
         </tbody>
       </table>
+      {plan && plan.remaining <= 0 && (
+        <FieldNote>Con este abono el préstamo queda liquidado. Las cuotas pendientes salen del calendario.</FieldNote>
+      )}
       <FieldNote>
         {unscheduled
           ? borrowed

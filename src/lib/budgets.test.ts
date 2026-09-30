@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Budget, Category, RecurringItem, Transaction } from '../db/types'
-import { budgetRows, budgetTone, budgetTotals, expectedIncome, limitFor, monthPace, shiftMonth, spentByCategory } from './budgets'
+import { budgetIncomeBasis, budgetRows, budgetTone, budgetTotals, expectedIncome, limitFor, monthPace, shiftMonth, spentByCategory } from './budgets'
 
 const stamp = '2026-09-01T00:00:00.000Z'
 
@@ -87,5 +87,12 @@ describe('budgets', () => {
       source: 'received',
       unknownItems: 1,
     })
+  })
+
+  test('the budget percent uses an average month, not the Fridays of this month', () => {
+    const weekly = { ...payday(5, 1200), frequency: 'weekly' as const, interval: 2, start_date: '2026-09-04' }
+    expect(budgetIncomeBasis([weekly], [], '2026-09')).toBe(2600)
+    expect(budgetIncomeBasis([payday(15, 20000), payday(30, 20000)], [], '2026-09')).toBe(40000)
+    expect(budgetIncomeBasis([payday(15, null)], [tx('income', '2026-09-15', 18000, null)], '2026-09')).toBe(18000)
   })
 })

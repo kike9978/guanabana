@@ -27,6 +27,7 @@ import { roundMoney } from '../lib/money'
 import { parseAmount, parseDay } from '../lib/parseAmount'
 import { msiPendingByCard, msiPlans, msiPostedCount, msiPurchase, msiSchedule, payableBalance } from '../lib/msi'
 import { computeRealAvailable } from '../lib/realAvailable'
+import { moneySnapshot } from '../lib/snapshot'
 import { lastCut, nextPayment, nextPayments, paymentLabel, statementOpenForPayment } from '../lib/statement'
 
 type NewAccountType = Exclude<AccountType, 'unassigned'>
@@ -39,19 +40,25 @@ const ACCOUNT_TYPES: { value: NewAccountType; label: string }[] = [
   { value: 'savings', label: ACCOUNT_TYPE_LABEL.savings },
 ]
 
-const LIQUID_TYPES = ACCOUNT_TYPES.filter((option) => isLiquid({ type: option.value }))
-
 const STRATEGIES = (Object.keys(STRATEGY_LABEL) as PaymentStrategy[]).map((value) => ({ value, label: STRATEGY_LABEL[value] }))
 
 const money = (value: number) => formatMoney(value, 'MXN')
 
-function AccountForm({ account, onDone }: { account?: Account; onDone: () => void }) {
+function AccountForm({ account, data, onDone }: { account?: Account; data?: MoneyData; onDone: () => void }) {
   const [type, setType] = useState<NewAccountType>(account && account.type !== 'unassigned' ? account.type : 'checking')
   const [name, setName] = useState(account?.name ?? '')
   const [balance, setBalance] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const typeOptions = account ? (isLiquid(account) ? LIQUID_TYPES : []) : ACCOUNT_TYPES
+  const typeOptions = account?.type === 'unassigned' ? [] : ACCOUNT_TYPES
+  const typeChanged = Boolean(account && account.type !== 'unassigned' && type !== account.type)
+  const availability = account && data && typeChanged
+    ? (() => {
+        const now = new Date()
+        const shifted = { ...data, accounts: data.accounts.map((row) => (row.uuid === account.uuid ? { ...row, type } : row)) }
+        return { before: moneySnapshot(data, now).breakdown.total, after: moneySnapshot(shifted, now).breakdown.total }
+      })()
+    : null
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -82,6 +89,13 @@ function AccountForm({ account, onDone }: { account?: Account; onDone: () => voi
         !isLiquid({ type }) && (
           <FieldNote>No cuenta en tu Disponible real. Si su saldo cambia por rendimientos, actualízalo desde aquí y reparte la diferencia en tus apartados.</FieldNote>
         )
+      )}
+      {availability && (
+        <FieldNote>
+          {availability.before === availability.after
+            ? 'Tu Disponible real no cambia.'
+            : `Tu Disponible real ${availability.after > availability.before ? 'sube' : 'baja'} ${money(Math.abs(availability.after - availability.before))}.`}
+        </FieldNote>
       )}
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={account ? 'Guardar cambios' : 'Guardar cuenta'} saving={saving} onCancel={onDone} />
@@ -456,7 +470,7 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
         </button>
       }
     >
-      {mode === 'edit' && account && <AccountForm account={account} onDone={() => setMode('view')} />}
+      {mode === 'edit' && account && <AccountForm account={account} data={data} onDone={() => setMode('view')} />}
       {mode === 'edit' && card && <CardForm card={card} onDone={() => setMode('view')} />}
       {mode === 'reconcile' && <ReconcileForm data={data} target={selection} onDone={() => setMode('view')} />}
       {mode === 'cover' && account && <CoverForm data={data} account={account} onDone={() => setMode('view')} />}

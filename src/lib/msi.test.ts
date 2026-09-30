@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { CreditCard, Transaction } from '../db/types'
 import { dateToIso } from './dates'
-import { msiAmounts, msiPendingByCard, msiSchedule, msiUnbilled, payableBalance } from './msi'
+import { msiAmounts, msiPendingByCard, msiSchedule, msiUnbilled, payableBalance, shortenMsi } from './msi'
 import { computeRealAvailable } from './realAvailable'
 
 const base = { updated_at: '2026-09-29T00:00:00.000Z' }
@@ -89,6 +89,14 @@ describe('Disponible real with MSI', () => {
 
   test('paying MSI early never reserves below zero', () => {
     expect(payableBalance({ ...card, current_balance: 4000 }, { card: 11000 })).toBe(0)
+  })
+
+  test('a partial refund shortens the plan from the end, and covering it deletes the purchase', () => {
+    const plan = { date: '2026-09-29', amount: 12000, months: 12 }
+    expect(shortenMsi(plan, 3000)).toEqual({ amount: 9000, months: 9 })
+    expect(shortenMsi(plan, 500)).toEqual({ amount: 11500, months: 11 })
+    expect(shortenMsi(plan, 12000)).toBe('delete')
+    expect(shortenMsi({ ...plan, months: 1 }, 100)).toBeNull()
   })
 
   test('refunds, bank expenses, and single-payment card expenses are not MSI', () => {

@@ -134,17 +134,26 @@ export function comparablePrice(unit: PriceUnit, unit_price: number): { family: 
   return { family: UNIT_FAMILY[unit], price: roundMoney(unit_price * TO_BASE[unit]) }
 }
 
+/** Expenses with a negative amount are refunds. Their lines explain the return and are not a price. */
+export function refundTransactionIds(transactions: { uuid: string; type: string; amount: number }[]): Set<string> {
+  return new Set(transactions.filter((tx) => tx.type === 'expense' && tx.amount < 0).map((tx) => tx.uuid))
+}
+
+function isPricedPurchase(line: TransactionLine, refunds?: Set<string>): boolean {
+  return !refunds?.has(line.transaction_id) && line.line_total > 0
+}
+
 export function observation(line: TransactionLine, places: Place[]): PriceObservation | null {
-  if (line.unit_price === null) return null
+  if (line.unit_price === null || line.unit_price <= 0 || line.line_total <= 0) return null
   return { line, place: places.find((p) => p.uuid === line.place_id) ?? null, ...comparablePrice(line.unit, line.unit_price) }
 }
 
 const byDate = (a: TransactionLine, b: TransactionLine) => a.date.localeCompare(b.date) || a.updated_at.localeCompare(b.updated_at)
 
-/** Priced observations of one item, oldest first. */
-export function observationsOf(itemId: string, lines: TransactionLine[], places: Place[]): PriceObservation[] {
+/** Priced observations of one item, oldest first. Refund lines stay off the chart. */
+export function observationsOf(itemId: string, lines: TransactionLine[], places: Place[], refunds?: Set<string>): PriceObservation[] {
   return lines
-    .filter((line) => line.item_id === itemId)
+    .filter((line) => line.item_id === itemId && isPricedPurchase(line, refunds))
     .sort(byDate)
     .flatMap((line) => observation(line, places) ?? [])
 }
@@ -157,11 +166,11 @@ export interface PriceRow {
   count: number
 }
 
-/** Items with at least one line, most recently bought first. */
-export function priceRoster(items: Item[], lines: TransactionLine[], places: Place[]): PriceRow[] {
+/** Items with at least one line, most recently bought first. A refund does not become the last price. */
+export function priceRoster(items: Item[], lines: TransactionLine[], places: Place[], refunds?: Set<string>): PriceRow[] {
   return items
     .flatMap((item) => {
-      const own = lines.filter((line) => line.item_id === item.uuid).sort(byDate)
+      const own = lines.filter((line) => line.item_id === item.uuid && isPricedPurchase(line, refunds)).sort(byDate)
       if (own.length === 0) return []
       const lastLine = own[own.length - 1]
       const priced = own.flatMap((line) => observation(line, places) ?? [])

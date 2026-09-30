@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../../components/fields'
 import { selectable } from '../../db/accounts'
-import { saveTransaction } from '../../db/ledger'
+import { deleteTransaction, saveTransaction } from '../../db/ledger'
 import { UNCATEGORIZED_KEY } from '../../db/seed'
 import type { AccountType, PaymentMethod, Place } from '../../db/types'
 import type { AddFormProps } from './formProps'
-import { todayIso } from '../../lib/dates'
+import { isoToDate, todayIso } from '../../lib/dates'
 import { formatDate, formatMoney } from '../../lib/format'
-import { MSI_TERMS, msiSchedule } from '../../lib/msi'
+import { isMsi, MSI_TERMS, msiPurchase, msiSchedule, shortenMsi } from '../../lib/msi'
 import { pickValid } from '../../lib/forms'
 import { categoryOptions as categoryOptionsFor } from '../../lib/categories'
 import { parseAmount } from '../../lib/parseAmount'
@@ -57,6 +57,7 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
   const [placeDraft, setPlaceDraft] = useState<PlaceDraft>({ name: '', kind: 'supermarket', area: '' })
   const [invalidLine, setInvalidLine] = useState<string | null>(null)
   const [msiMonths, setMsiMonths] = useState(String(editing?.msi_months ?? MSI_NONE))
+  const [shortenChoice, setShortenChoice] = useState('')
 
   const keep = [prefill?.account_id, prefill?.cc_id]
   const accounts = selectable(data.accounts, keep)
@@ -87,6 +88,15 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
   const msiCharges = activeCard && months > MSI_NONE && parsedAmount !== null && parsedAmount > 0
     ? msiSchedule({ date, amount: parsedAmount, months }, activeCard.statement_day)
     : []
+  const refund = parsedAmount !== null && parsedAmount < 0 ? -parsedAmount : 0
+  const msiPlansOnCard = activeCard && refund > 0 && !editing && !prefill?.loan_installment_id && !prefill?.recurring_id
+    ? data.transactions.filter((tx) => isMsi(tx) && tx.cc_id === activeCard.uuid && tx.amount >= refund)
+    : []
+  const chosenPlan = msiPlansOnCard.find((tx) => tx.uuid === shortenChoice)
+  const shortened = chosenPlan ? shortenMsi(msiPurchase(chosenPlan), refund) : null
+  const shortenedCharges = chosenPlan && shortened && shortened !== 'delete' && activeCard
+    ? msiSchedule({ date: chosenPlan.date, amount: shortened.amount, months: shortened.months }, activeCard.statement_day)
+    : []
 
   if (data.loaded && methodOptions.length === 0) {
     return <NeedsAccount onOpenAccounts={onOpenAccounts} />
@@ -97,6 +107,19 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
     const value = parseAmount(amount)
     if (value === null || value === 0) return setError('Escribe un monto distinto de cero.')
     if (!activeMethod || !activeSource) return setError('Elige con qué pagaste.')
+    if (msiPlansOnCard.length > 0 && shortenChoice === '') return setError('Elige si este reembolso acorta un plan a meses.')
+    if (chosenPlan && shortened) {
+      setSaving(true)
+      try {
+        if (shortened === 'delete') await deleteTransaction(chosenPlan)
+        else await saveTransaction(chosenPlan, { type: chosenPlan.type, date: chosenPlan.date, amount: shortened.amount, msi_months: shortened.months })
+        onDone()
+      } catch {
+        setError('No se pudo guardar. Intenta de nuevo.')
+        setSaving(false)
+      }
+      return
+    }
 
     const withLines = showLines && value > 0
     let place: Place | null = null
@@ -144,12 +167,12 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
 
   return (
     <form className="form" onSubmit={submit} noValidate>
-      <AmountField label="Monto (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
+      <AmountField label="Monto (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null); setShortenChoice('') }} invalid={error !== null} autoFocus />
       {activeMethod && (
         <ChoiceField label="Método" value={activeMethod} onChange={setMethod} options={methodOptions} />
       )}
       {sources.length > 1 && activeSource && (
-        <SelectField label={activeMethod === 'credit_card' ? 'Tarjeta' : 'Cuenta'} value={activeSource} onChange={setSourceId} options={sources} />
+        <SelectField label={activeMethod === 'credit_card' ? 'Tarjeta' : 'Cuenta'} value={activeSource} onChange={(id) => { setSourceId(id); setShortenChoice('') }} options={sources} />
       )}
       {activeCategory && (
         <CategoryPicker categories={data.categories} kind="expense" value={activeCategory} onChange={setCategoryId} keep={[prefill?.category_id]} />
@@ -195,6 +218,30 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
         <FieldNote>Este pago ya estaba apartado. Al guardarlo, tu Disponible real no cambia.</FieldNote>
       ) : (
         <FieldNote>Un monto negativo se registra como reembolso.</FieldNote>
+      )}
+      {msiPlansOnCard.length > 0 && (
+        <>
+          <ChoiceField
+            label="¿Acorta un plan a meses?"
+            value={shortenChoice}
+            onChange={setShortenChoice}
+            options={[
+              { value: 'none', label: 'No, solo baja la deuda' },
+              ...msiPlansOnCard.map((tx) => ({
+                value: tx.uuid,
+                label: `Acortar · ${tx.notes.trim() || formatDate(isoToDate(tx.date))} · ${formatMoney(tx.amount, 'MXN')}`,
+              })),
+            ]}
+          />
+          {chosenPlan && shortened === 'delete' && (
+            <FieldNote>{`Se cancela esa compra y la deuda baja ${formatMoney(chosenPlan.amount, 'MXN')}. No se agrega otro movimiento.`}</FieldNote>
+          )}
+          {chosenPlan && shortened && shortened !== 'delete' && shortenedCharges.length > 0 && (
+            <FieldNote>
+              {`La compra queda en ${formatMoney(shortened.amount, 'MXN')} a ${shortened.months} meses, ${formatMoney(shortenedCharges[0].amount, 'MXN')} por corte hasta el ${formatDate(shortenedCharges[shortenedCharges.length - 1].date)}. La deuda baja ${formatMoney(refund, 'MXN')}. No se agrega otro movimiento.`}
+            </FieldNote>
+          )}
+        </>
       )}
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={editing ? 'Guardar cambios' : 'Guardar gasto'} saving={saving} onCancel={onDone} />

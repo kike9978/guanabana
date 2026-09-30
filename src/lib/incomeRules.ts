@@ -14,7 +14,7 @@ export function incomeSlots(recurring: RecurringItem[]): RecurringItem[] {
   return recurring.filter((item) => item.active && item.type === 'income').sort((a, b) => a.due_day - b.due_day)
 }
 
-/** Loans paid per income follow day-of-month paydays only. */
+/** Day-of-month paydays. Weekly income is scheduled from its dates instead. */
 export function monthlyIncomeSlots(recurring: RecurringItem[]): RecurringItem[] {
   return incomeSlots(recurring).filter(isPlainMonthly)
 }

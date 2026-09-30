@@ -10,6 +10,7 @@ import {
   normalizeName,
   observationsOf,
   priceRoster,
+  refundTransactionIds,
   resolveLine,
   unitPrice,
   type LineDraft,
@@ -122,5 +123,16 @@ describe('price history', () => {
     expect(row.last?.price).toBe(58)
     expect(row.count).toBe(4)
     expect(priceRoster([item('ghost', 'Ghost')], lines, [])).toEqual([])
+  })
+
+  test('a refund line lowers nothing on the chart', () => {
+    const refund = line({ uuid: 'back', transaction_id: 'refund', date: '2026-09-22', unit_price: 10, line_total: 10 })
+    const purchases = lines.filter((row) => row.uuid !== refund.uuid)
+    const hidden = refundTransactionIds([{ uuid: 'refund', type: 'expense', amount: -10 }])
+    const obs = observationsOf('leche', [...purchases, refund], [chedraui, walmart], hidden)
+    expect(obs.some((row) => row.line.uuid === 'back')).toBe(false)
+    expect(obs.map((row) => row.price)).toEqual([28.5, 26, 58])
+    const [row] = priceRoster([leche], [...purchases, refund], [chedraui, walmart], hidden)
+    expect(row.last?.price).toBe(58)
   })
 })

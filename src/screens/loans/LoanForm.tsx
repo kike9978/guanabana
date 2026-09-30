@@ -3,12 +3,13 @@ import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectFie
 import { isLiquid, selectable } from '../../db/accounts'
 import { createLoan } from '../../db/commitments'
 import type { IncomeSlot, LoanDirection, LoanFrequency, LoanInterest } from '../../db/types'
-import { monthlyIncomeSlots, slotDays } from '../../lib/incomeRules'
+import { isPlainMonthly } from '../../lib/cycle'
+import { incomeSlots, monthlyIncomeSlots } from '../../lib/incomeRules'
 import type { MoneyData } from '../../db/useMoneyData'
 import { isoToDate, todayIso } from '../../lib/dates'
 import { formatDate, formatMoney } from '../../lib/format'
 import { DISBURSEMENT_KEY } from '../../lib/categories'
-import { buildSchedule, isUnscheduled, type ScheduleRow } from '../../lib/loans'
+import { buildSchedule, incomePaydayDates, incomePeriodsPerYear, isUnscheduled, type ScheduleRow } from '../../lib/loans'
 import { moneySnapshot } from '../../lib/snapshot'
 import { NEW_LOAN_CHECKPOINTS, newLoanPreview } from '../../lib/loanTimeline'
 import { roundMoney } from '../../lib/money'
@@ -103,12 +104,24 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
       }
   const scheduleKey = JSON.stringify(scheduleInput)
   const activeOverrides = overrides.key === scheduleKey ? overrides.rows : {}
+  const incomeItems = incomeSlots(data.recurring).filter((item) => item.frequency !== 'once')
+  const weeklyPay = incomeItems.some((item) => !isPlainMonthly(item))
   const paydays = monthlyIncomeSlots(data.recurring)
-  const slotOptions: { value: IncomeSlot; label: string }[] = [
-    ...(paydays[0] ? [{ value: 'first' as const, label: paydays.length > 1 ? `1er ingreso · día ${paydays[0].due_day}` : `Mi ingreso · día ${paydays[0].due_day}` }] : []),
-    ...(paydays[1] ? [{ value: 'second' as const, label: `2º ingreso · día ${paydays[1].due_day}` }, { value: 'both' as const, label: 'Cada ingreso' }] : []),
-  ]
-  const preview = applyOverrides(buildSchedule(scheduleInput, slotDays(data.recurring, slot)), activeOverrides, interest)
+  const slotOptions: { value: IncomeSlot; label: string }[] = weeklyPay
+    ? [
+        { value: 'first', label: '1er ingreso' },
+        { value: 'second', label: '2º ingreso' },
+        { value: 'both', label: 'Cada ingreso' },
+      ]
+    : [
+        ...(paydays[0] ? [{ value: 'first' as const, label: paydays.length > 1 ? `1er ingreso · día ${paydays[0].due_day}` : `Mi ingreso · día ${paydays[0].due_day}` }] : []),
+        ...(paydays[1] ? [{ value: 'second' as const, label: `2º ingreso · día ${paydays[1].due_day}` }, { value: 'both' as const, label: 'Cada ingreso' }] : []),
+      ]
+  const paydayPlan = {
+    dates: incomePaydayDates(data.recurring, slot, firstDue, Number.isInteger(countValue) ? countValue : 0),
+    periodsPerYear: incomePeriodsPerYear(data.recurring, slot),
+  }
+  const preview = applyOverrides(buildSchedule(scheduleInput, frequency === 'per_income' ? paydayPlan : []), activeOverrides, interest)
   const total = roundMoney(preview.reduce((sum, row) => sum + row.amount, 0))
   const totalInterest = roundMoney(preview.reduce((sum, row) => sum + row.interest_part, 0))
   const totalPrincipal = roundMoney(preview.reduce((sum, row) => sum + row.principal_part, 0))
@@ -203,7 +216,7 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
         label="Frecuencia"
         value={frequency}
         onChange={setFrequency}
-        options={[...FREQUENCIES, ...(paydays.length > 0 ? [{ value: 'per_income' as const, label: 'Por ingreso' }] : []), UNSCHEDULED]}
+        options={[...FREQUENCIES, ...(incomeItems.length > 0 ? [{ value: 'per_income' as const, label: 'Por ingreso' }] : []), UNSCHEDULED]}
       />
       {!unscheduled && (
         <>
@@ -218,7 +231,9 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
         <>
           <ChoiceField label="Se paga con" value={slot} onChange={setSlot} options={slotOptions} />
           <FieldNote>
-            Cada cuota cae en ese día de ingreso y se paga con él. Si luego cambias tus días de ingreso, el calendario guardado no cambia; puedes editar sus fechas aquí antes de guardar.
+            {weeklyPay
+              ? 'Cada cuota cae en ese ingreso. Con un pago semanal, el 1º y el 2º se alternan desde el primer día guardado. Si luego cambias tus días, el calendario guardado no cambia; puedes editar sus fechas aquí antes de guardar.'
+              : 'Cada cuota cae en ese día de ingreso y se paga con él. Si luego cambias tus días de ingreso, el calendario guardado no cambia; puedes editar sus fechas aquí antes de guardar.'}
           </FieldNote>
         </>
       )}

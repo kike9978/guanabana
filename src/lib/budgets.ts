@@ -60,6 +60,13 @@ export function scheduledMonthlyIncome(recurring: RecurringItem[]): number {
   )
 }
 
+/** What the budget percent divides by. A schedule uses an average month; without amounts, what already arrived. */
+export function budgetIncomeBasis(recurring: RecurringItem[], transactions: Transaction[], month: string): number {
+  const average = scheduledMonthlyIncome(recurring)
+  if (average > 0) return average
+  return expectedIncome(recurring, transactions, month).amount
+}
+
 export function expectedIncome(recurring: RecurringItem[], transactions: Transaction[], month: string): ExpectedIncome {
   const { from, to } = monthBounds(month)
   const items = recurring.filter((item) => item.active && item.type === 'income')

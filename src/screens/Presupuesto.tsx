@@ -8,6 +8,7 @@ import type { Category, PlanItem } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { useRecords } from '../db/useRecords'
 import {
+  budgetIncomeBasis,
   budgetRows,
   budgetTone,
   budgetTotals,
@@ -209,13 +210,14 @@ export function Presupuesto({ data, header }: { data: MoneyData; header: ReactNo
   const plannedOf = (ids: string[]) => roundMoney(ids.reduce((sum, id) => sum + (planned.get(id) ?? 0), 0))
   const totals = budgetTotals(rows)
   const income = expectedIncome(data.recurring, data.transactions, month)
+  const incomeBasis = budgetIncomeBasis(data.recurring, data.transactions, month)
   const pace = monthPace(month, today)
   const selectedParent = rows.find((row) => row.children.some((child) => child.category.uuid === selected)) ?? null
   const selectedRow = rows.find((row) => row.category.uuid === selected) ?? selectedParent?.children.find((child) => child.category.uuid === selected)
   const creating = selected === NEW_LIMIT
   const budgeted = rows.filter((row) => row.limit !== null)
   const loose = rows.filter((row) => row.limit === null)
-  const share = income.amount > 0 ? Math.round((totals.budgeted / income.amount) * 100) : null
+  const share = incomeBasis > 0 ? Math.round((totals.budgeted / incomeBasis) * 100) : null
   const overall = budgetTone(totals.spentInBudgets, totals.budgeted || null, pace)
 
   return (
@@ -295,7 +297,9 @@ export function Presupuesto({ data, header }: { data: MoneyData; header: ReactNo
         </Panel>
         <FooterHint>
           {income.source === 'schedule'
-            ? `Ingreso esperado del mes: ${money(income.amount)}, según tus días de ingreso.`
+            ? `Ingreso esperado del mes: ${money(income.amount)}, según tus días de ingreso.${
+                incomeBasis !== income.amount ? ` El porcentaje usa un mes promedio: ${money(incomeBasis)}.` : ''
+              }`
             : income.source === 'received'
               ? `Sin montos en tus días de ingreso; se usa lo que ya recibiste este mes: ${money(income.amount)}.`
               : 'Agrega el monto de tus ingresos en Pagos fijos para comparar tus límites con lo que ganas.'}

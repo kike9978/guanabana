@@ -1,4 +1,5 @@
 import { balanceEffects } from '../lib/ledger'
+import { loanStatusAfterPayment, summarizeLoan } from '../lib/loans'
 import { todayIso } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { complete, newRecord, notifyChange, openDb, settle, type StoreName } from './db'
@@ -96,6 +97,29 @@ async function restoreSchedule(tx: IDBTransaction, extra: Transaction, now: stri
   }
 }
 
+/** A payment that clears what is left marks the loan paid and drops it from the timeline. Undoing that payment reopens it. */
+async function refreshPaidLoans(tx: IDBTransaction, change: LedgerChange, now: string): Promise<void> {
+  const records = [change.remove, change.put, ...(change.putMany ?? [])].filter((record): record is Transaction => record !== undefined)
+  const installmentIds = new Set(records.map((record) => record.loan_installment_id).filter((id): id is string => Boolean(id)))
+  const loanIds = new Set(records.map((record) => record.loan_extra_id).filter((id): id is string => Boolean(id)))
+  for (const row of change.installments ?? []) loanIds.add(row.loan_id)
+  if (installmentIds.size > 0) {
+    const rows = await getAllIn<LoanInstallment>(tx.objectStore('loan_installments'))
+    for (const row of rows) if (installmentIds.has(row.uuid)) loanIds.add(row.loan_id)
+  }
+
+  const store = tx.objectStore('loans')
+  const installments = loanIds.size > 0 ? await getAllIn<LoanInstallment>(tx.objectStore('loan_installments')) : []
+  const transactions = loanIds.size > 0 ? await getAllIn<Transaction>(tx.objectStore('transactions')) : []
+  for (const loanId of loanIds) {
+    const loan = (await settle(store.get(loanId))) as Loan | undefined
+    if (!loan) continue
+    const remaining = summarizeLoan(loan, installments.filter((row) => row.loan_id === loanId), transactions).remaining
+    const status = loanStatusAfterPayment(loan.status, remaining)
+    if (status !== loan.status) store.put({ ...loan, status, updated_at: now })
+  }
+}
+
 function netEffects(change: LedgerChange): Map<string, { store: 'accounts' | 'credit_cards'; uuid: string; delta: number }> {
   const net = new Map<string, { store: 'accounts' | 'credit_cards'; uuid: string; delta: number }>()
   const add = (record: Transaction, direction: 1 | -1) => {
@@ -143,6 +167,7 @@ async function applyLedger(change: LedgerChange): Promise<void> {
     for (const move of change.bucketMoves ?? []) tx.objectStore('bucket_moves').put(move)
     for (const item of change.planItems ?? []) tx.objectStore('plan_items').put(item)
     await writeLines(tx, change)
+    await refreshPaidLoans(tx, change, now)
   } catch (error) {
     tx.abort()
     await done.catch(() => undefined)

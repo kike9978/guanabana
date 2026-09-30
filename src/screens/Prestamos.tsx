@@ -39,6 +39,7 @@ function LoanDossier({
   const rows = loanRows(loan, data.installments)
   const borrowed = loan.direction === 'borrowed'
   const writtenOff = loan.status === 'written_off'
+  const paidOff = loan.status === 'paid'
   const handedOver = data.transactions.find((tx) => tx.loan_id === loan.uuid)
   const open = rows.filter((row) => !isInstallmentPaid(row, paid))
   const openTotal = open.reduce((sum, row) => sum + row.amount, 0)
@@ -69,8 +70,9 @@ function LoanDossier({
     >
       <p className="hero-figure">
         {formatAmount(summary.remaining)}
-        <span className="hero-currency">{borrowed ? 'MXN por pagar' : writtenOff ? 'MXN sin cobrar' : 'MXN por cobrar'}</span>
+        <span className="hero-currency">{paidOff ? 'MXN liquidado' : borrowed ? 'MXN por pagar' : writtenOff ? 'MXN sin cobrar' : 'MXN por cobrar'}</span>
       </p>
+      {paidOff && <FooterHint>Este préstamo está liquidado. Las cuotas pendientes salieron del calendario.</FooterHint>}
       {writtenOff && <FooterHint>Lo diste por perdido. Lo que cobraste se queda en tus movimientos.</FooterHint>}
       <div className="stat-list">
         <StatBar label="Avance" value={`${Math.round(summary.progress * 100)}%`} ratio={summary.progress} />
@@ -328,10 +330,11 @@ export function Prestamos({ onAdd }: { onAdd: (type: AddType, prefill: AddPrefil
                 {loans.map((loan) => {
                   const summary = summarizeLoan(loan, data.installments, data.transactions)
                   const writtenOff = loan.status === 'written_off'
+                  const paidOff = loan.status === 'paid'
                   return (
                     <tr
                       key={loan.uuid}
-                      className={`roster-row${writtenOff ? ' dim' : ''}`}
+                      className={`roster-row${writtenOff || paidOff ? ' dim' : ''}`}
                       aria-selected={loan.uuid === selected}
                       tabIndex={0}
                       onClick={() => setSelected(loan.uuid === selected ? null : loan.uuid)}
@@ -342,11 +345,12 @@ export function Prestamos({ onAdd }: { onAdd: (type: AddType, prefill: AddPrefil
                           {loan.direction === 'borrowed' ? 'Debo' : 'Me deben'}
                           {loan.lender_label && ` · ${loan.lender_label}`}
                           {writtenOff && ' · Dado por perdido'}
+                          {paidOff && ' · Pagado'}
                         </span>
                       </td>
                       <td className="num mono" data-label="Restante">{money(summary.remaining)}</td>
                       <td className="mono dim" data-label="Próxima cuota">
-                        {writtenOff
+                        {writtenOff || paidOff
                           ? '—'
                           : isUnscheduled(loan) && summary.remaining > 0
                             ? 'Sin fecha'
