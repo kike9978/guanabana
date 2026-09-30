@@ -109,7 +109,7 @@ Four layers. Location is not purpose.
 
 ```
 Liquid                  = Bank + Cash + Unassigned_Opening_Balance
-CC_Reserve              = sum over full-strategy cards of max(0, balance − MSI_Unbilled)
+CC_Reserve              = sum over all cards of max(0, balance − MSI_Unbilled)
 MSI_Unbilled            = MSI charges whose statement period has not opened yet
 Bills_Before_Next_Income = recurring bills due before the next income event
 Loan_Installments_Before_Next_Income = loan installments due before the next income event
@@ -126,6 +126,20 @@ The opening balance lets the user start with one number (“tengo 12,000 hoy”)
 An apartado can also start with money that was already set aside and is not inside Banco, Efectivo, or Saldo sin origen. That amount is an opening move on the bucket. It counts in the apartado balance and in its progress, and it is left out of `Virtual_Buckets_In_Liquid`, so Disponible real does not change. Pesos that are already inside those accounts are not an opening: reserving them is Apartar, and Disponible real drops.
 
 Bank balance is never shown as spendable. A credit-card expense leaves the bank balance unchanged, raises card debt, and lowers Real Available immediately.
+
+The payment strategy never changes the reserve. Every peso on a card is owed, so Pago total, Saldo al corte, and Pago mínimo all reserve the whole balance. The strategy only changes the next payment: its amount, the payment form's suggestion, and the split shown as “vence el …” and “pasa al siguiente corte”.
+
+```
+Last_Cut          = latest statement day on or before today
+Statement_Balance = card debt on Last_Cut − MSI still unbilled on Last_Cut
+                    (or the “Saldo al último corte” the user entered for that cut)
+Credits_Since_Cut = card payments, refunds, and negative adjustments after Last_Cut
+Statement_Due     = clamp(Statement_Balance − Credits_Since_Cut, 0, payable balance)
+Minimum_Due       = clamp(minimum_payment − Credits_Since_Cut, 0, Statement_Due), only when entered for Last_Cut
+Next_Payment      = Statement_Due (Saldo al corte) or Minimum_Due (Pago mínimo), due on the first due day after Last_Cut
+```
+
+Once that due date passes, the open period is the next payment: everything payable at the next cut, due after it. A statement balance or minimum entered for an older cut is ignored. Without an entered figure, opening debt counts as billed, so it is all due on the next due date.
 
 A card purchase at meses sin intereses (MSI) raises card debt by the whole amount, but Real Available only reserves one monthly charge per statement. Charges are equal (the last keeps the cents) and fall on the card’s cut day, starting with the first cut on or after the purchase. Each charge enters the reserve the day after the previous cut, like any purchase in that period, so the first one counts right away. The unbilled rest is still owed and shows as “a meses por cobrar”; the projection picks up each charge as its period opens. Paying MSI early is allowed and only lowers the reserve to zero, never below.
 
@@ -173,12 +187,12 @@ Local SQLite (Capacitor) or IndexedDB (PWA). Export is encrypted JSON. Every dom
 | `transaction_lines` | transaction_id, item_id, place_id, qty, unit, unit_price, line_total, currency |
 | `items` | name, normalized_name, default_unit, category_id, barcode (optional, local only) |
 | `places` | name, kind (`supermarket` / `market` / `convenience` / `other`), area |
-| `credit_cards` | name, limit, current_balance, statement_day, due_day, payment_strategy (`full` / `statement` / `minimum`), archived |
+| `credit_cards` | name, limit, current_balance, statement_day, due_day, payment_strategy (`full` / `statement` / `minimum`), statement_balance (optional), minimum_payment (optional), statement_date (the cut both belong to), archived |
 | `loans` | name, direction (`borrowed` / `lent`), lender_label (short, no full names), principal, currency, interest (`none` / `fixed_rate` / `fixed_installment`), rate_annual, installment_amount, frequency (`monthly` / `biweekly` / `per_income`), income_slot (`first` / `second` / `both`, only for `per_income`), first_due_date, installment_count, pay_from_account_id, status (`active` / `paid` / `paused`) |
 | `loan_installments` | loan_id, due_date, amount, principal_part, interest_part, status (`scheduled` / `skipped` / `settled` / `superseded`), created_by, replaced_by. Paid and late are derived: an installment is paid when a transaction carries its `loan_installment_id` (or it is `settled`, paid before tracking), and late when it is unpaid past its due date. `superseded` rows were replaced by an extra payment and stay for undo. |
 | `savings_buckets` | name, target, target_date (optional), sort_order, archived, rule_type (`emergency` / `retirement` / `travel` / `custom`), account_id (null = bank or cash; a savings account = outside liquid), income_share (custom only, optional: `{income: first / second / both, amount}`). Balance is derived from `bucket_moves`. |
 | `bucket_moves` | bucket_id, amount (signed), date, reason, source (`manual` / `opening` / `first_income` / `second_income` / `bucket_transfer`), income_tx_id, transfer_id (pairs the two moves of a bucket-to-bucket transfer), tx_id (the account transfer that funded it), reverses_id (a move that cancels another). `opening` is money already set aside outside liquid accounts. |
-| `recurring_items` | name, amount, due_day, account_id, category_id, type (`bill` / `income`) |
+| `recurring_items` | name, amount, due_day, account_id, cc_id (bills only: paid with a card), category_id, type (`bill` / `income`) |
 | `budgets` | category_id (a category or a subcategory), month (`YYYY-MM`, or null for every month), limit_mxn |
 | `settings` | buffer_mxn, cash_reviewed_at, first_income_rule, second_income_rule |
 | `projection_scenarios` | name, amount, date, card_id, msi_months, income_monthly, daily_spend, extra_expenses |
@@ -252,6 +266,10 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Accounts: Bank MXN, Cash MXN, Savings.
 - [x] Each account stores type, currency, and current balance.
 - [x] Credit cards: name, limit, balance, statement day, due day, strategy (`full` default).
+- [ ] Every strategy reserves the whole card balance (minus unbilled MSI). Saldo al corte and Pago mínimo only change the next payment.
+- [ ] Next payment per card: Saldo al corte shows what the last statement billed minus credits since; Pago mínimo shows the minimum entered for that cut. The Disponible real breakdown, the card roster and dossier, and Próximos 14 días show “vence el …” and “pasa al siguiente corte”. Amounts, not percentages.
+- [ ] Optional “Saldo al último corte” and “Pago mínimo de este corte” on the card form, tied to the last cut. Editing shows the previous value. Empty or older figures fall back to the computed statement.
+- [ ] The card-payment form suggests the statement amount and the minimum when they apply, and still allows the total.
 - [x] Account chips on Inicio use the section-rail pattern and show a count or balance.
 - [x] Edit and archive accounts and cards. Editing changes details only (name, bank ↔ cash, card limit, days, strategy); balances change only through Ajustar saldo. Archiving needs a zero balance; archived records leave the pickers and keep their history.
 

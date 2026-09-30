@@ -74,7 +74,10 @@ export async function updateAccount(account: Account, fields: Pick<Account, 'nam
 
 export async function updateCard(
   card: CreditCard,
-  fields: Pick<CreditCard, 'name' | 'limit' | 'statement_day' | 'due_day' | 'payment_strategy'>,
+  fields: Pick<
+    CreditCard,
+    'name' | 'limit' | 'statement_day' | 'due_day' | 'payment_strategy' | 'statement_balance' | 'minimum_payment' | 'statement_date'
+  >,
 ): Promise<void> {
   const updated: CreditCard = { ...card, ...fields, updated_at: new Date().toISOString() }
   await putMany('credit_cards', [updated])

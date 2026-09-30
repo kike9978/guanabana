@@ -184,9 +184,7 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
       {msiCharges.length > 0 && activeCard ? (
         <FieldNote>
           {`${msiCharges.length} mensualidades de ${formatMoney(msiCharges[0].amount, 'MXN')}, del corte del ${formatDate(msiCharges[0].date)} al del ${formatDate(msiCharges[msiCharges.length - 1].date)}. `}
-          {activeCard.payment_strategy === 'full'
-            ? 'La deuda sube el total, pero tu Disponible real solo aparta la mensualidad de cada corte.'
-            : 'La deuda sube el total y cada corte cobra una mensualidad.'}
+          La deuda sube el total, pero tu Disponible real solo aparta la mensualidad de cada corte.
         </FieldNote>
       ) : activeMethod === 'credit_card' ? (
         <FieldNote>Con tarjeta tu banco no cambia. Sube la deuda y baja tu Disponible real.</FieldNote>

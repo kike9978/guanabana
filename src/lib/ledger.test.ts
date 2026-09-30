@@ -76,7 +76,14 @@ describe('balanceEffects', () => {
 })
 
 describe('computeRealAvailable', () => {
-  test('subtracts full-strategy card debt and buffer from liquid money', () => {
+  test('every payment strategy reserves the whole card balance', () => {
+    for (const strategy of ['full', 'statement', 'minimum'] as const) {
+      const result = computeRealAvailable({ accounts: [account('bank', 'checking', 10000)], cards: [card(2500, strategy)], buffer: 0 })
+      expect(result.ccReserve).toBe(2500)
+    }
+  })
+
+  test('subtracts card debt and buffer from liquid money', () => {
     const result = computeRealAvailable({
       accounts: [account('bank', 'checking', 10000), account('cash', 'cash', 500), account('s', 'savings', 9000)],
       cards: [card(2500)],

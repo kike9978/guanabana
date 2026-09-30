@@ -18,11 +18,12 @@ import type { Account, AccountType, CreditCard, PaymentStrategy } from '../db/ty
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { formatDate, formatMoney } from '../lib/format'
 import { categoryLabel } from '../lib/categories'
-import { isoToDate, nextDateForDay } from '../lib/dates'
+import { dateToIso, isoToDate } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { parseAmount, parseDay } from '../lib/parseAmount'
 import { msiPendingByCard, msiPlans, msiPostedCount, msiPurchase, msiSchedule, payableBalance } from '../lib/msi'
 import { computeRealAvailable } from '../lib/realAvailable'
+import { lastCut, nextPayment, nextPayments, paymentLabel, statementOpenForPayment } from '../lib/statement'
 
 type NewAccountType = Exclude<AccountType, 'unassigned'>
 export type Selection = { kind: 'account'; uuid: string } | { kind: 'card'; uuid: string }
@@ -89,22 +90,55 @@ function CardForm({ card, onDone }: { card?: CreditCard; onDone: () => void }) {
   const [statementDay, setStatementDay] = useState(card ? String(card.statement_day) : '')
   const [dueDay, setDueDay] = useState(card ? String(card.due_day) : '')
   const [strategy, setStrategy] = useState<PaymentStrategy>(card?.payment_strategy ?? 'full')
+  const today = new Date()
+  const initialCut = card ? dateToIso(lastCut(card.statement_day, today)) : null
+  const keeps = card?.statement_date != null && card.statement_date === initialCut
+  const [statementBalance, setStatementBalance] = useState(keeps && card?.statement_balance != null ? String(card.statement_balance) : '')
+  const [minimum, setMinimum] = useState(keeps && card?.minimum_payment != null ? String(card.minimum_payment) : '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  const parsedStatementDay = parseDay(statementDay)
+  const parsedDueDay = parseDay(dueDay)
+  const cut = parsedStatementDay === null ? null : lastCut(parsedStatementDay, today)
+  const askStatement =
+    strategy !== 'full' &&
+    cut !== null &&
+    parsedDueDay !== null &&
+    statementOpenForPayment({ statement_day: parsedStatementDay!, due_day: parsedDueDay }, today)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     const limitValue = parseAmount(limit || '0')
     const debtValue = parseAmount(debt || '0')
-    const statement = parseDay(statementDay)
-    const due = parseDay(dueDay)
+    const statement = parsedStatementDay
+    const due = parsedDueDay
+    const statementValue = askStatement && statementBalance.trim() ? parseAmount(statementBalance) : null
+    const minimumValue = askStatement && strategy === 'minimum' && minimum.trim() ? parseAmount(minimum) : null
     if (!name.trim()) return setError('Ponle un nombre corto, sin el número de la tarjeta.')
     if (limitValue === null || debtValue === null) return setError('Revisa el límite y la deuda.')
     if (statement === null || due === null) return setError('El día de corte y el de pago van del 1 al 31.')
+    if ((statementBalance.trim() && askStatement && (statementValue === null || statementValue < 0)) || (minimumValue !== null && minimumValue < 0)) {
+      return setError('Revisa el saldo al corte y el pago mínimo.')
+    }
+    if (minimum.trim() && askStatement && strategy === 'minimum' && minimumValue === null) return setError('Revisa el pago mínimo.')
+    if (minimumValue !== null && statementValue !== null && minimumValue > statementValue) {
+      return setError('El pago mínimo no puede ser mayor que el saldo al corte.')
+    }
 
     setSaving(true)
     try {
-      const fields = { name: name.trim(), limit: limitValue, statement_day: statement, due_day: due, payment_strategy: strategy }
+      const entered = statementValue !== null || minimumValue !== null
+      const fields = {
+        name: name.trim(),
+        limit: limitValue,
+        statement_day: statement,
+        due_day: due,
+        payment_strategy: strategy,
+        statement_balance: statementValue,
+        minimum_payment: minimumValue,
+        statement_date: entered && cut ? dateToIso(cut) : null,
+      }
       if (card) await updateCard(card, fields)
       else await createCard({ ...fields, current_balance: debtValue })
       onDone()
@@ -124,8 +158,31 @@ function CardForm({ card, onDone }: { card?: CreditCard; onDone: () => void }) {
         <TextField label="Día de pago" value={dueDay} onChange={setDueDay} inputMode="numeric" placeholder="25" mono />
       </div>
       <ChoiceField label="Cómo la pagas" value={strategy} onChange={setStrategy} options={STRATEGIES} />
+      {askStatement && cut && (
+        <>
+          <div className="field-row">
+            <AmountField
+              label="Saldo al último corte (MXN)"
+              value={statementBalance}
+              onChange={(v) => { setStatementBalance(v); setError(null) }}
+            />
+            {strategy === 'minimum' && (
+              <AmountField label="Pago mínimo de este corte (MXN)" value={minimum} onChange={(v) => { setMinimum(v); setError(null) }} />
+            )}
+          </div>
+          <FieldNote>
+            {`Opcional. Es lo de tu estado de cuenta del corte del ${formatDate(cut)}. Déjalo vacío para calcularlo con tus movimientos.`}
+            {keeps && card?.statement_balance != null && statementBalance !== String(card.statement_balance)
+              ? ` Antes: ${money(card.statement_balance)} al corte.`
+              : ''}
+            {keeps && card?.minimum_payment != null && minimum !== String(card.minimum_payment) ? ` Antes: ${money(card.minimum_payment)} de mínimo.` : ''}
+          </FieldNote>
+        </>
+      )}
       <FieldNote>
-        {card ? 'La deuda se cambia con Ajustar saldo, para que quede registrada.' : 'Con pago total, toda la deuda se aparta de tu Disponible real.'}
+        {card
+          ? 'La deuda se cambia con Ajustar saldo, para que quede registrada.'
+          : 'Toda la deuda se aparta de tu Disponible real. Cómo la pagas solo cambia el monto de tu próximo pago.'}
       </FieldNote>
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={card ? 'Guardar cambios' : 'Guardar tarjeta'} saving={saving} onCancel={onDone} />
@@ -240,6 +297,7 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
     .sort((a, b) => b.date.localeCompare(a.date))[0]
   const now = new Date()
   const msiPending = card ? (msiPendingByCard(data.transactions, [card], now)[card.uuid] ?? 0) : 0
+  const payment = card ? nextPayment(card, data.transactions, now) : null
   const msiRows = card
     ? msiPlans(data.transactions, card)
         .map((tx) => {
@@ -294,6 +352,26 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
                   <span className="dim">Pago sin meses por cobrar</span>
                   <span className="mono">{money(payableBalance(card, { [card.uuid]: msiPending }))}</span>
                 </div>
+              </>
+            )}
+            {payment && card && card.payment_strategy !== 'full' && payment.amount + payment.rest > 0 && (
+              <>
+                {card.payment_strategy === 'minimum' && payment.minimum !== null && (
+                  <div className="readout">
+                    <span className="dim">Saldo al corte</span>
+                    <span className="mono">{money(payment.statement)}</span>
+                  </div>
+                )}
+                <div className="readout">
+                  <span className="dim">{`Próximo pago (${paymentLabel(card, payment)}) · ${formatDate(payment.due)}`}</span>
+                  <span className="mono">{money(payment.amount)}</span>
+                </div>
+                {payment.rest > 0 && (
+                  <div className="readout">
+                    <span className="dim">Pasa al siguiente corte</span>
+                    <span className="mono">{money(payment.rest)}</span>
+                  </div>
+                )}
               </>
             )}
             <div className="readout">
@@ -377,6 +455,8 @@ export function Cuentas() {
     .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name))
   const cards = data.cards.filter((c) => !c.archived)
   const msiPending = msiPendingByCard(data.transactions, cards, new Date())
+  const payments = nextPayments(cards, data.transactions, new Date())
+  const splitsPayment = cards.some((card) => card.payment_strategy !== 'full')
   const archived: { selection: Selection; name: string; label: string; balance: number }[] = [
     ...data.accounts
       .filter((a) => a.archived)
@@ -459,7 +539,8 @@ export function Cuentas() {
               </div>
               <ul className="card-roster">
                 {cards.map((card) => {
-                  const after = roundMoney(bank - payableBalance(card, msiPending))
+                  const payment = payments[card.uuid]
+                  const after = roundMoney(bank - payment.amount)
                   const selected = isSelected('card', card.uuid)
                   return (
                     <li key={card.uuid}>
@@ -474,6 +555,7 @@ export function Cuentas() {
                           <span className="row-sub">
                             Corte día {card.statement_day} · {STRATEGY_LABEL[card.payment_strategy]}
                             {msiPending[card.uuid] ? ` · ${money(msiPending[card.uuid])} a meses` : ''}
+                            {card.payment_strategy !== 'full' && payment.rest > 0 ? ` · ${money(payment.rest)} al siguiente corte` : ''}
                           </span>
                         </span>
                         <span data-field="debt" className="num mono">
@@ -486,7 +568,7 @@ export function Cuentas() {
                         </span>
                         <span data-field="due" className="mono">
                           <span className="cell-label">Pago</span>
-                          {formatDate(nextDateForDay(card.due_day, new Date()))}
+                          {formatDate(payment.due)}
                         </span>
                         <span data-field="after" className={`num mono${after < 0 ? ' text-heat' : ''}`}>
                           <span className="cell-label">Banco tras pago</span>
@@ -504,6 +586,7 @@ export function Cuentas() {
               {Object.keys(msiPending).length > 0
                 ? 'Banco tras pago: cuánto queda en tu banco si pagas el total, sin las mensualidades que aún no llegan.'
                 : 'Banco tras pago: cuánto queda en tu banco si pagas el total.'}
+              {splitsPayment ? ' Con saldo al corte o pago mínimo, si pagas lo que vence.' : ''}
             </FooterHint>
           )}
         </Panel>

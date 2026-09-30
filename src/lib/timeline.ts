@@ -3,6 +3,7 @@ import type { MoneyData } from '../db/useMoneyData'
 import { occurrencesBetween } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
 import { paidInstallmentIds } from './loans'
+import { nextPayments } from './statement'
 import { cardEvents } from './upcoming'
 
 export type TimelineKind = 'cc_due' | 'cc_statement' | 'bill' | 'income' | 'loan' | 'loan_receivable'
@@ -23,7 +24,8 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
     data.transactions.filter((tx) => tx.recurring_id && tx.occurrence).map((tx) => `${tx.recurring_id}|${tx.occurrence}`),
   )
 
-  for (const event of cardEvents(data.cards, from, daysBetween(from, to) - 1)) {
+  const payments = nextPayments(data.cards, data.transactions, new Date())
+  for (const event of cardEvents(data.cards, from, daysBetween(from, to) - 1, payments)) {
     if (event.date < to) events.push({ ...event, paid: false })
   }
 
@@ -44,6 +46,7 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
           prefill: {
             amount: item.amount ?? undefined,
             account_id: item.account_id,
+            cc_id: isBill ? (item.cc_id ?? null) : null,
             category_id: item.category_id,
             notes: item.name,
             recurring_id: item.uuid,

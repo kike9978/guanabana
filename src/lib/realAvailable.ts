@@ -32,10 +32,9 @@ function sumBalances(accounts: Account[], type: Account['type']): number {
     .reduce((sum, account) => sum + account.current_balance, 0)
 }
 
+/** Every card reserves its whole payable balance; the strategy only changes the next payment. */
 export function ccReserve(cards: CreditCard[], msiPending: Record<string, number> = {}): number {
-  return cards
-    .filter((card) => card.payment_strategy === 'full')
-    .reduce((sum, card) => sum + payableBalance(card, msiPending), 0)
+  return cards.reduce((sum, card) => sum + payableBalance(card, msiPending), 0)
 }
 
 export function computeRealAvailable({

@@ -23,6 +23,11 @@ export interface CreditCard extends BaseRecord {
   statement_day: number
   due_day: number
   payment_strategy: PaymentStrategy
+  /** What the statement of `statement_date` billed, when the user entered it. */
+  statement_balance?: number | null
+  minimum_payment?: number | null
+  /** The cut `statement_balance` and `minimum_payment` belong to; older cuts are ignored. */
+  statement_date?: string | null
   archived?: boolean
 }
 
@@ -92,6 +97,7 @@ export interface RecurringItem extends BaseRecord {
   amount: number | null
   due_day: number
   account_id: string | null
+  cc_id?: string | null
   category_id: string | null
   start_date: string
   active: boolean

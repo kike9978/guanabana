@@ -11,7 +11,7 @@ export function todayIso(): string {
   return dateToIso(new Date())
 }
 
-function dayInMonth(year: number, month: number, day: number): Date {
+export function dayInMonth(year: number, month: number, day: number): Date {
   const last = new Date(year, month + 1, 0).getDate()
   return new Date(year, month, Math.min(day, last), 12)
 }

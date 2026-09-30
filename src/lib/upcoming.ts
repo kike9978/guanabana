@@ -1,5 +1,6 @@
 import type { CreditCard } from '../db/types'
-import { daysBetween, nextDateForDay } from './dates'
+import { dateToIso, daysBetween, nextDateForDay } from './dates'
+import type { NextPayment } from './statement'
 
 export interface UpcomingEvent {
   key: string
@@ -9,12 +10,16 @@ export interface UpcomingEvent {
   kind: 'cc_due' | 'cc_statement'
 }
 
-export function cardEvents(cards: CreditCard[], from: Date, withinDays: number): UpcomingEvent[] {
+/** `payments` replaces the due amount of Saldo al corte and Pago mínimo cards on their next due date. */
+export function cardEvents(cards: CreditCard[], from: Date, withinDays: number, payments: Record<string, NextPayment> = {}): UpcomingEvent[] {
   const events: UpcomingEvent[] = []
   for (const card of cards) {
     const due = nextDateForDay(card.due_day, from)
-    if (daysBetween(from, due) <= withinDays && card.current_balance > 0) {
-      events.push({ key: `${card.uuid}-due`, date: due, label: `Pago ${card.name}`, amount: card.current_balance, kind: 'cc_due' })
+    const next = payments[card.uuid]
+    const amount =
+      card.payment_strategy !== 'full' && next && dateToIso(next.due) === dateToIso(due) ? next.amount : card.current_balance
+    if (daysBetween(from, due) <= withinDays && amount > 0) {
+      events.push({ key: `${card.uuid}-due`, date: due, label: `Pago ${card.name}`, amount, kind: 'cc_due' })
     }
     const statement = nextDateForDay(card.statement_day, from)
     if (daysBetween(from, statement) <= withinDays) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel, Rail, StatBar } from '../components/hud'
 import { OpeningBalancePanel } from '../components/OpeningBalancePanel'
@@ -17,6 +17,7 @@ import { summarizeLoan } from '../lib/loans'
 import { roundMoney } from '../lib/money'
 import { realAvailableTone } from '../lib/realAvailable'
 import { moneySnapshot } from '../lib/snapshot'
+import { nextPayments, paymentLabel } from '../lib/statement'
 import { timeline, type TimelineEvent } from '../lib/timeline'
 
 const UPCOMING_DAYS = 14
@@ -116,6 +117,7 @@ export function Inicio({
     { label: 'Efectivo', value: breakdown.cash, show: true },
     { label: 'Saldo sin origen', value: breakdown.unassigned, show: breakdown.unassigned !== 0 },
     {
+      id: 'card',
       label: breakdown.ccMsiPending > 0 ? `− Deuda TDC (sin ${money(breakdown.ccMsiPending)} a meses por cobrar)` : '− Deuda TDC',
       value: breakdown.ccReserve,
       show: true,
@@ -125,6 +127,10 @@ export function Inicio({
     { label: '− Apartados en banco y efectivo', value: breakdown.bucketsInLiquid, show: true },
     { label: '− Colchón', value: breakdown.buffer, show: true },
   ].filter((row) => row.show)
+  const payments = nextPayments(cards, data.transactions, now)
+  const cardSplits = cards
+    .filter((card) => card.payment_strategy !== 'full' && payments[card.uuid].amount + payments[card.uuid].rest > 0)
+    .map((card) => ({ card, payment: payments[card.uuid] }))
   const scale = Math.max(1, ...rows.map((row) => Math.abs(row.value)))
   const tone = realAvailableTone(breakdown, hasMoneyData)
   const cardDebt = roundMoney(cards.reduce((sum, c) => sum + c.current_balance, 0))
@@ -260,13 +266,29 @@ export function Inicio({
           </p>
           <div className="stat-list">
             {rows.map((row) => (
-              <StatBar
-                key={row.label}
-                label={row.label}
-                value={money(row.value)}
-                ratio={Math.abs(row.value) / scale}
-                tone={hasMoneyData ? 'safe' : 'empty'}
-              />
+              <Fragment key={row.label}>
+                <StatBar
+                  label={row.label}
+                  value={money(row.value)}
+                  ratio={Math.abs(row.value) / scale}
+                  tone={hasMoneyData ? 'safe' : 'empty'}
+                />
+                {row.id === 'card' &&
+                  cardSplits.map(({ card, payment }) => (
+                    <Fragment key={card.uuid}>
+                      <div className="readout">
+                        <span className="dim">{`${card.name} · ${paymentLabel(card, payment)} vence el ${formatDate(payment.due)}`}</span>
+                        <span className="mono">{money(payment.amount)}</span>
+                      </div>
+                      {payment.rest > 0 && (
+                        <div className="readout">
+                          <span className="dim">{`${card.name} · pasa al siguiente corte`}</span>
+                          <span className="mono">{money(payment.rest)}</span>
+                        </div>
+                      )}
+                    </Fragment>
+                  ))}
+              </Fragment>
             ))}
           </div>
           <div className="dossier-total">

@@ -36,7 +36,7 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
   const [name, setName] = useState(item?.name ?? '')
   const [amount, setAmount] = useState(item?.amount != null ? String(item.amount) : '')
   const [day, setDay] = useState(item ? String(item.due_day) : '')
-  const [accountId, setAccountId] = useState<string | null>(item?.account_id ?? null)
+  const [sourceId, setSourceId] = useState<string | null>(item?.cc_id ?? item?.account_id ?? null)
   const [categoryId, setCategoryId] = useState<string | null>(item?.category_id ?? null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -45,7 +45,10 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
   const accountOptions = [
     { value: '', label: 'Sin cuenta fija' },
     ...selectable(data.accounts, [item?.account_id]).filter(isLiquid).map((a) => ({ value: a.uuid, label: a.name })),
+    ...(kind === 'bill' ? selectable(data.cards, [item?.cc_id]).map((c) => ({ value: c.uuid, label: `${c.name} · TDC` })) : []),
   ]
+  const activeSource = pickValid(sourceId, accountOptions)
+  const isCard = data.cards.some((c) => c.uuid === activeSource)
   const categoryKind = kind === 'bill' ? 'expense' : 'income'
   const categoryOptions = categoryOptionsFor(data.categories, categoryKind, [item?.category_id])
   const activeCategory = pickValid(categoryId, categoryOptions)
@@ -65,7 +68,8 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         name: name.trim(),
         amount: value,
         due_day: dueDay,
-        account_id: accountId || null,
+        account_id: isCard ? null : activeSource || null,
+        cc_id: isCard ? (activeSource ?? null) : null,
         category_id: activeCategory ?? null,
       }
       if (item) await updateRecurring(item, fields)
@@ -84,7 +88,8 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         <TextField label="Día del mes" value={day} onChange={setDay} inputMode="numeric" placeholder={kind === 'income' ? '15' : '1'} mono />
         <AmountField label={copy.amountLabel} value={amount} onChange={setAmount} />
       </div>
-      <SelectField label={kind === 'income' ? 'Llega a' : 'Se paga desde'} value={accountId ?? ''} onChange={setAccountId} options={accountOptions} />
+      <SelectField label={kind === 'income' ? 'Llega a' : 'Se paga desde'} value={activeSource ?? ''} onChange={setSourceId} options={accountOptions} />
+      {isCard && <FieldNote>Con tarjeta tu banco no cambia. Se aparta de tu Disponible real y, al registrarlo, sube la deuda de la tarjeta.</FieldNote>}
       {activeCategory && (
         <CategoryPicker categories={data.categories} kind={categoryKind} value={activeCategory} onChange={setCategoryId} keep={[item?.category_id]} />
       )}
