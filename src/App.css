@@ -19,6 +19,8 @@
 /* Status strip */
 
 .status-strip {
+  position: relative;
+  z-index: 6;
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -904,7 +906,8 @@ button.calendar-day {
   cursor: pointer;
 }
 
-.roster-row[aria-selected='true'] {
+.roster-row[aria-selected='true'],
+.card-roster-row[aria-pressed='true'] {
   background: var(--panel-active);
   outline: 1px solid var(--line-strong);
   outline-offset: -1px;
@@ -913,6 +916,130 @@ button.calendar-day {
 .roster-row:focus-visible {
   outline: 1px solid var(--line-strong);
   outline-offset: -1px;
+}
+
+/* Card roster: five columns when the panel is wide, stacked rows when it is not. */
+
+.roster-fit {
+  container: roster / inline-size;
+  min-width: 0;
+}
+
+.card-roster {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card-roster-head,
+.card-roster-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto auto auto auto;
+  column-gap: var(--space-3);
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+}
+
+.card-roster-head {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.card-roster-row {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.cell-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@container roster (max-width: 46rem) {
+  .card-roster-head {
+    display: none;
+  }
+
+  .card-roster-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name debt'
+      'credit credit'
+      'due due'
+      'after after';
+    row-gap: 2px;
+    align-items: start;
+  }
+
+  .card-roster-row [data-field='name'] {
+    grid-area: name;
+    min-width: 0;
+  }
+
+  .card-roster-row .card-name {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-roster-row [data-field='debt'] {
+    grid-area: debt;
+    white-space: nowrap;
+  }
+
+  .card-roster-row [data-field='credit'],
+  .card-roster-row [data-field='due'],
+  .card-roster-row [data-field='after'] {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2);
+    min-width: 0;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .card-roster-row [data-field='credit'] {
+    grid-area: credit;
+  }
+
+  .card-roster-row [data-field='due'] {
+    grid-area: due;
+  }
+
+  .card-roster-row [data-field='after'] {
+    grid-area: after;
+  }
+
+  .card-roster-row [data-field='credit'] .cell-label,
+  .card-roster-row [data-field='due'] .cell-label,
+  .card-roster-row [data-field='after'] .cell-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    flex: none;
+    font-size: var(--text-label);
+    letter-spacing: var(--tracking-label);
+    text-align: left;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
 }
 
 /* Forms */
@@ -1112,11 +1239,51 @@ select.input option {
 /* Command bar */
 
 .command-bar {
+  position: relative;
+  z-index: 6;
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   border-top: 1px solid var(--line);
   background: var(--bar-bg);
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Selection dossier: right column when wide, a sheet over the stage when narrow. */
+
+@media (max-width: 899px) {
+  .dossier-sheet {
+    position: fixed;
+    z-index: 5;
+    inset: 48px 0 52px;
+    display: block;
+    overflow: auto;
+    margin: 0;
+    padding: var(--space-3);
+    background: var(--bg);
+    border-top: 1px solid var(--line-strong);
+  }
+
+  .dossier-sheet:focus {
+    outline: none;
+  }
+
+  .dossier-sheet:focus-visible {
+    outline: 1px solid var(--line-strong);
+    outline-offset: -1px;
+  }
+
+  .dossier-sheet > * + * {
+    margin-top: var(--space-3);
+  }
+
+  .dossier-sheet .panel-head {
+    position: sticky;
+    top: calc(-1 * var(--space-3));
+    z-index: 1;
+    margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg);
+  }
 }
 
 .command {

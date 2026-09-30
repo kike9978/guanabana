@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, StatBar } from '../components/hud'
@@ -617,6 +617,18 @@ export function Ahorro({
 }) {
   const data = useMoneyData()
   const [selected, setSelected] = useState<string | null>(null)
+  const dossierRef = useRef<HTMLElement>(null)
+  const dossierKey = selected
+  useEffect(() => {
+    if (!dossierKey) return
+    if (!window.matchMedia('(max-width: 899px)').matches) return
+    dossierRef.current?.focus({ preventScroll: true })
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelected(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [dossierKey])
   if (!data.loaded) return null
 
   const active = data.buckets.filter((bucket) => !bucket.archived)
@@ -685,14 +697,14 @@ export function Ahorro({
         )}
       </div>
       {creating && (
-        <aside className="dossier" aria-label="Nuevo apartado">
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label="Nuevo apartado">
           <Panel title="Nuevo apartado">
             <BucketForm data={data} onDone={() => setSelected(null)} onCreated={(bucket) => setSelected(bucket.uuid)} />
           </Panel>
         </aside>
       )}
       {selectedBucket && (
-        <aside className="dossier" aria-label={selectedBucket.name}>
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label={selectedBucket.name}>
           <BucketDossier key={selectedBucket.uuid} bucket={selectedBucket} data={data} onClose={() => setSelected(null)} />
         </aside>
       )}

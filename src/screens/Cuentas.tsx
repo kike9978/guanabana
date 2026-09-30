@@ -449,43 +449,55 @@ export function Cuentas() {
           {cards.length === 0 ? (
             <FooterHint>Aún no hay tarjetas.</FooterHint>
           ) : (
-            <table className="roster">
-              <thead>
-                <tr>
-                  <th scope="col">Tarjeta</th>
-                  <th scope="col" className="num">Deuda</th>
-                  <th scope="col" className="num">Crédito disp.</th>
-                  <th scope="col">Pago</th>
-                  <th scope="col" className="num">Banco tras pago</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div className="roster-fit">
+              <div className="card-roster-head" aria-hidden="true">
+                <span>Tarjeta</span>
+                <span className="num">Deuda</span>
+                <span className="num">Crédito disp.</span>
+                <span>Pago</span>
+                <span className="num">Banco tras pago</span>
+              </div>
+              <ul className="card-roster">
                 {cards.map((card) => {
                   const after = roundMoney(bank - payableBalance(card, msiPending))
+                  const selected = isSelected('card', card.uuid)
                   return (
-                    <tr
-                      key={card.uuid}
-                      className="roster-row"
-                      tabIndex={0}
-                      aria-selected={isSelected('card', card.uuid)}
-                      onClick={() => toggle({ kind: 'card', uuid: card.uuid })}
-                    >
-                      <td>
-                        {card.name}
-                        <span className="row-sub">
-                          Corte día {card.statement_day} · {STRATEGY_LABEL[card.payment_strategy]}
-                          {msiPending[card.uuid] ? ` · ${money(msiPending[card.uuid])} a meses` : ''}
+                    <li key={card.uuid}>
+                      <button
+                        type="button"
+                        className="roster-row card-roster-row"
+                        aria-pressed={selected}
+                        onClick={() => toggle({ kind: 'card', uuid: card.uuid })}
+                      >
+                        <span data-field="name">
+                          <span className="card-name">{card.name}</span>
+                          <span className="row-sub">
+                            Corte día {card.statement_day} · {STRATEGY_LABEL[card.payment_strategy]}
+                            {msiPending[card.uuid] ? ` · ${money(msiPending[card.uuid])} a meses` : ''}
+                          </span>
                         </span>
-                      </td>
-                      <td className="num mono">{money(card.current_balance)}</td>
-                      <td className="num mono">{money(card.limit - card.current_balance)}</td>
-                      <td className="mono">{formatDate(nextDateForDay(card.due_day, new Date()))}</td>
-                      <td className={`num mono${after < 0 ? ' text-heat' : ''}`}>{money(after)}</td>
-                    </tr>
+                        <span data-field="debt" className="num mono">
+                          <span className="cell-label">Deuda</span>
+                          {money(card.current_balance)}
+                        </span>
+                        <span data-field="credit" className="num mono">
+                          <span className="cell-label">Crédito disp.</span>
+                          {money(card.limit - card.current_balance)}
+                        </span>
+                        <span data-field="due" className="mono">
+                          <span className="cell-label">Pago</span>
+                          {formatDate(nextDateForDay(card.due_day, new Date()))}
+                        </span>
+                        <span data-field="after" className={`num mono${after < 0 ? ' text-heat' : ''}`}>
+                          <span className="cell-label">Banco tras pago</span>
+                          {money(after)}
+                        </span>
+                      </button>
+                    </li>
                   )
                 })}
-              </tbody>
-            </table>
+              </ul>
+            </div>
           )}
           {cards.length > 0 && (
             <FooterHint>
