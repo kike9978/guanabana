@@ -1,4 +1,5 @@
 import { balanceEffects } from '../lib/ledger'
+import { todayIso } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { complete, newRecord, notifyChange, openDb, settle, type StoreName } from './db'
 import type { Account, BucketMove, CreditCard, LoanInstallment, Transaction } from './types'
@@ -14,10 +15,23 @@ interface LedgerChange {
   bucketMoves?: BucketMove[]
 }
 
-async function removeLinkedMoves(tx: IDBTransaction, record: Transaction): Promise<void> {
+async function reverseLinkedMoves(tx: IDBTransaction, record: Transaction): Promise<void> {
   const store = tx.objectStore('bucket_moves')
   const moves = await getAllIn<BucketMove>(store)
-  for (const move of moves.filter((m) => m.tx_id === record.uuid)) store.delete(move.uuid)
+  const date = todayIso()
+  for (const move of moves.filter((m) => m.tx_id === record.uuid)) {
+    store.put(
+      newRecord<BucketMove>({
+        bucket_id: move.bucket_id,
+        amount: -move.amount,
+        reason: 'Se eliminó la transferencia',
+        source: move.source,
+        date,
+        income_tx_id: null,
+        reverses_id: move.uuid,
+      }),
+    )
+  }
 }
 
 function getAllIn<T>(store: IDBObjectStore): Promise<T[]> {
@@ -73,7 +87,7 @@ async function applyLedger(change: LedgerChange): Promise<void> {
 
     const transactions = tx.objectStore('transactions')
     if (change.remove && !change.put && change.remove.loan_extra_id) await restoreSchedule(tx, change.remove, now)
-    if (change.remove && !change.put) await removeLinkedMoves(tx, change.remove)
+    if (change.remove && !change.put) await reverseLinkedMoves(tx, change.remove)
     if (change.remove && change.remove.uuid !== change.put?.uuid) transactions.delete(change.remove.uuid)
     if (change.put) transactions.put(change.put)
     for (const row of change.installments ?? []) tx.objectStore('loan_installments').put(row)

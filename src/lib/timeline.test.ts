@@ -42,6 +42,7 @@ function data(transactions: Transaction[] = []): MoneyData {
     installments: [installment],
     buckets: [],
     bucketMoves: [],
+    budgets: [],
     settings: undefined,
   }
 }

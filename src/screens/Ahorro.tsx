@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
-import { AmountField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
+import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, StatBar } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import { ACCOUNT_TYPE_LABEL, selectable } from '../db/accounts'
@@ -14,9 +14,9 @@ import {
   transferBetweenBuckets,
   updateBucket,
 } from '../db/buckets'
-import type { SavingsBucket } from '../db/types'
+import type { IncomeShare, SavingsBucket } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
-import { bucketBalance, bucketHistory, isHeldInLiquid, targetPace } from '../lib/buckets'
+import { bucketBalance, bucketHistory, isHeldInLiquid, setAsideThisCycle, targetPace } from '../lib/buckets'
 import { isoToDate } from '../lib/dates'
 import { incomeRank, isRuleIncome, ruleMoves, type IncomeRule } from '../lib/incomeRules'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
@@ -27,6 +27,15 @@ import { moneySnapshot } from '../lib/snapshot'
 type Mode = 'view' | 'add' | 'withdraw' | 'transfer' | 'setup'
 
 const NEW_BUCKET = 'new'
+
+type ShareChoice = IncomeShare['income'] | 'none'
+
+const SHARE_OPTIONS: { value: ShareChoice; label: string }[] = [
+  { value: 'none', label: 'Nada' },
+  { value: 'first', label: '1er ingreso' },
+  { value: 'second', label: '2º ingreso' },
+  { value: 'both', label: 'Ambos' },
+]
 
 const money = (value: number) => formatMoney(value, 'MXN')
 
@@ -99,8 +108,11 @@ function BucketForm({
   const [target, setTarget] = useState(bucket?.target == null ? '' : String(bucket.target))
   const [targetDate, setTargetDate] = useState(bucket?.target_date ?? '')
   const [accountId, setAccountId] = useState(bucket?.account_id ?? '')
+  const [shareIncome, setShareIncome] = useState<ShareChoice>(bucket?.income_share?.income ?? 'none')
+  const [shareAmount, setShareAmount] = useState(bucket?.income_share ? String(bucket.income_share.amount) : '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const custom = !bucket || !isSystemBucket(bucket)
   const options = [
     { value: '', label: 'Banco o efectivo' },
     ...selectable(data.accounts, [bucket?.account_id])
@@ -121,7 +133,15 @@ function BucketForm({
     if (duplicate) return setError('Ya tienes un apartado con ese nombre.')
     if (target.trim() !== '' && (value === null || value < 0)) return setError('Revisa la meta.')
     if (targetDate && !value) return setError('Para usar una fecha, escribe también la meta.')
-    const fields = { name: trimmed, target: value, target_date: targetDate || null, account_id: accountId || null }
+    const share = shareIncome === 'none' ? null : parseAmount(shareAmount)
+    if (custom && shareIncome !== 'none' && (share === null || share <= 0)) return setError('Escribe cuánto apartar con cada ingreso.')
+    const fields = {
+      name: trimmed,
+      target: value,
+      target_date: targetDate || null,
+      account_id: accountId || null,
+      income_share: custom && shareIncome !== 'none' && share ? { income: shareIncome, amount: share } : null,
+    }
     setSaving(true)
     try {
       if (bucket) {
@@ -155,6 +175,17 @@ function BucketForm({
           ? 'En banco o efectivo, el apartado se descuenta de tu Disponible real. Si lo guardas en una cuenta de ahorro, agrégala en Cuentas.'
           : 'En banco o efectivo, el apartado se descuenta de tu Disponible real. En una cuenta de ahorro ya está fuera.'}
       </FieldNote>
+      {custom && (
+        <>
+          <ChoiceField label="Con cada ingreso" value={shareIncome} onChange={(v) => { setShareIncome(v); setError(null) }} options={SHARE_OPTIONS} />
+          {shareIncome !== 'none' && (
+            <AmountField label="Monto sugerido por ingreso (MXN)" value={shareAmount} onChange={(v) => { setShareAmount(v); setError(null) }} />
+          )}
+          {shareIncome !== 'none' && (
+            <FieldNote>Aparece en la regla de ese ingreso como sugerencia. Nada se aparta hasta que confirmas la regla.</FieldNote>
+          )}
+        </>
+      )}
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={bucket ? 'Guardar' : 'Crear apartado'} saving={saving} onCancel={onDone} />
     </form>
@@ -213,6 +244,8 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
   const history = bucketHistory(bucket, data.bucketMoves)
   const account = data.accounts.find((a) => a.uuid === bucket.account_id)
   const pace = targetPace(bucket, balance, data.recurring, new Date())
+  const cycleSetAside = setAsideThisCycle(bucket, data.bucketMoves, data.recurring, new Date())
+  const required = cycleSetAside.required
   const custom = !isSystemBucket(bucket)
   const customs = data.buckets.filter((b) => !isSystemBucket(b) && !b.archived)
   const position = customs.findIndex((b) => b.uuid === bucket.uuid)
@@ -270,10 +303,41 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
             <span className={`mono${pace.overdue ? ' text-amber' : ''}`}>{money(pace.overdue ? pace.remaining : pace.perIncome ?? 0)}</span>
           </div>
         )}
+        {pace && pace.remaining > 0 && required !== null && (
+          <>
+            <table className="roster requirements">
+              <thead>
+                <tr>
+                  <th scope="col" className="wrap">Ingreso del {formatDate(cycleSetAside.since)}</th>
+                  <th scope="col" className="num">Requerido</th>
+                  <th scope="col" className="num">Apartado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="dim wrap">Al ritmo de la meta</td>
+                  <td className="num mono">{money(required)}</td>
+                  <td className={`num mono${cycleSetAside.amount < required ? ' text-amber' : ''}`}>{money(cycleSetAside.amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <FieldNote>
+              {cycleSetAside.amount >= required
+                ? 'Este ingreso ya apartó lo del ritmo.'
+                : `A este ingreso le faltan ${money(roundMoney(required - cycleSetAside.amount))} para ir al ritmo. Lo que no apartes se reparte en los ingresos que quedan.`}
+            </FieldNote>
+          </>
+        )}
         <div className="readout">
           <span className="dim">Dónde está</span>
           <span>{account ? account.name : 'Banco o efectivo'}</span>
         </div>
+        {bucket.income_share && (
+          <div className="readout">
+            <span className="dim">Con cada ingreso · {SHARE_OPTIONS.find((o) => o.value === bucket.income_share?.income)?.label}</span>
+            <span className="mono">{money(bucket.income_share.amount)}</span>
+          </div>
+        )}
       </div>
 
       {mode === 'add' && <MoveForm bucket={bucket} data={data} direction={1} onDone={done} />}

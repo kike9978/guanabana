@@ -8,7 +8,9 @@ import type { AddFormProps } from './formProps'
 import { todayIso } from '../../lib/dates'
 import { formatMoney } from '../../lib/format'
 import { pickValid } from '../../lib/forms'
+import { categoryOptions as categoryOptionsFor } from '../../lib/categories'
 import { parseAmount } from '../../lib/parseAmount'
+import { CategoryPicker } from '../../components/CategoryPicker'
 import { NeedsAccount } from './NeedsAccount'
 
 const METHOD_LABEL: Record<PaymentMethod, string> = {
@@ -56,9 +58,7 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
   const sources = activeMethod ? sourcesByMethod[activeMethod] : []
   const activeSource = pickValid(sourceId, sources)
 
-  const categoryOptions = data.categories
-    .filter((c) => c.kind === 'expense')
-    .map((c) => ({ value: c.uuid, label: c.name }))
+  const categoryOptions = categoryOptionsFor(data.categories, 'expense', [prefill?.category_id])
   const fallbackCategory = data.categories.find((c) => c.key === UNCATEGORIZED_KEY)?.uuid ?? null
   const activeCategory = pickValid(categoryId ?? prefillCategory ?? fallbackCategory, categoryOptions)
 
@@ -104,7 +104,7 @@ export function ExpenseForm({ data, onDone, onOpenAccounts, prefill, editing }: 
         <SelectField label={activeMethod === 'credit_card' ? 'Tarjeta' : 'Cuenta'} value={activeSource} onChange={setSourceId} options={sources} />
       )}
       {activeCategory && (
-        <SelectField label="Categoría" value={activeCategory} onChange={setCategoryId} options={categoryOptions} />
+        <CategoryPicker categories={data.categories} kind="expense" value={activeCategory} onChange={setCategoryId} keep={[prefill?.category_id]} />
       )}
       <TextField label="Fecha" type="date" value={date} onChange={setDate} mono />
       <TextField label="Nota" value={notes} onChange={setNotes} placeholder="Opcional" />

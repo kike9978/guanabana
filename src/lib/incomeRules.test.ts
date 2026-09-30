@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { Category, RecurringItem, Transaction } from '../db/types'
-import { fitToAvailable, incomeRank, isRuleIncome, planFirstIncome, planSecondIncome, scheduledIncomeMatches } from './incomeRules'
+import type { Category, RecurringItem, SavingsBucket, Transaction } from '../db/types'
+import { customShares, fitInOrder, incomeRank, isRuleIncome, planFirstIncome, planSecondIncome, scheduledIncomeMatches } from './incomeRules'
 
 const stamp = '2026-09-01T00:00:00.000Z'
 
@@ -82,9 +82,25 @@ describe('second-income rule', () => {
   test('short when the moves exceed Real Available, and fitting lowers travel first', () => {
     const plan = planSecondIncome({ income: 20000, retirementPct: 0.2, travelMax: 5000, available: 6000 })
     expect(plan.short).toBe(3000)
-    expect(fitToAvailable(plan.retirement, plan.travel, 6000)).toEqual({ retirement: 4000, travel: 2000 })
-    expect(fitToAvailable(plan.retirement, plan.travel, 3000)).toEqual({ retirement: 3000, travel: 0 })
-    expect(fitToAvailable(plan.retirement, plan.travel, -500)).toEqual({ retirement: 0, travel: 0 })
+    expect(fitInOrder([plan.retirement, plan.travel], 6000)).toEqual([4000, 2000])
+    expect(fitInOrder([plan.retirement, plan.travel], 3000)).toEqual([3000, 0])
+    expect(fitInOrder([plan.retirement, plan.travel], -500)).toEqual([0, 0])
+  })
+
+  test('custom buckets join the rule of their income, and fitting cuts them after the system buckets', () => {
+    const custom = (uuid: string, sort_order: number, income_share: SavingsBucket['income_share'], archived = false) =>
+      ({ uuid, updated_at: stamp, name: uuid, rule_type: 'custom', target: null, account_id: null, sort_order, archived, income_share }) as SavingsBucket
+    const buckets = [
+      custom('gifts', 2, { income: 'both', amount: 300 }),
+      custom('car', 1, { income: 'second', amount: 1000 }),
+      custom('pet', 3, { income: 'first', amount: 200 }),
+      custom('old', 4, { income: 'both', amount: 500 }, true),
+      custom('none', 5, null),
+      { ...custom('travel', 0, { income: 'both', amount: 900 }), rule_type: 'travel' } as SavingsBucket,
+    ]
+    expect(customShares(buckets, 'second').map((s) => [s.bucket.uuid, s.amount])).toEqual([['car', 1000], ['gifts', 300]])
+    expect(customShares(buckets, 'first').map((s) => s.bucket.uuid)).toEqual(['gifts', 'pet'])
+    expect(fitInOrder([4000, 1000, 1000, 300], 5500)).toEqual([4000, 1000, 500, 0])
   })
 })
 

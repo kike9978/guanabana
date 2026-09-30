@@ -4,9 +4,13 @@ import { FooterHint, Panel, Rail } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import { deleteTransaction, LedgerBlockedError } from '../db/ledger'
 import type { Transaction } from '../db/types'
+import { UNCATEGORIZED_KEY } from '../db/seed'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { isoToDate } from '../lib/dates'
 import { formatDate, formatMoney } from '../lib/format'
+import { categoryLabel, matchesCategory } from '../lib/categories'
+import { inRange, rangeLabel, spendMethod, type ExpenseFocus, type StatsWindow } from '../lib/stats'
+import { Estadisticas } from './Estadisticas'
 
 type MethodFilter = 'all' | 'bank' | 'cash' | 'credit_card'
 
@@ -34,7 +38,7 @@ const EMPTY_HINT: Record<MovementView, string> = {
 function describe(tx: Transaction, data: MoneyData) {
   const account = (id: string | null) => data.accounts.find((a) => a.uuid === id)?.name ?? '—'
   const card = data.cards.find((c) => c.uuid === tx.cc_id)?.name ?? '—'
-  const category = data.categories.find((c) => c.uuid === tx.category_id)?.name
+  const category = categoryLabel(tx.category_id, data.categories)
 
   switch (tx.type) {
     case 'expense':
@@ -63,14 +67,34 @@ function matchesFilter(tx: Transaction, filter: MethodFilter, data: MoneyData): 
   return [tx.account_id, tx.to_account_id].some((id) => data.accounts.find((a) => a.uuid === id)?.type === type)
 }
 
-function TransactionList({ data, onEdit }: { data: MoneyData; onEdit: (tx: EditableTransaction) => void }) {
+function matchesFocus(tx: Transaction, focus: ExpenseFocus, data: MoneyData, fallbackId: string | null): boolean {
+  if (tx.type !== 'expense' || !inRange(tx, focus.range)) return false
+  if (focus.categoryId) {
+    const id = tx.category_id ?? fallbackId
+    if (focus.exact ? id !== focus.categoryId : !matchesCategory(id, focus.categoryId, data.categories)) return false
+  }
+  return !focus.method || spendMethod(tx, data.accounts) === focus.method
+}
+
+function TransactionList({
+  data,
+  onEdit,
+  focus,
+  onClearFocus,
+}: {
+  data: MoneyData
+  onEdit: (tx: EditableTransaction) => void
+  focus: ExpenseFocus | null
+  onClearFocus: () => void
+}) {
   const [filter, setFilter] = useState<MethodFilter>('all')
   const [selected, setSelected] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const fallbackId = data.categories.find((c) => c.key === UNCATEGORIZED_KEY)?.uuid ?? null
 
   const rows = data.transactions
-    .filter((tx) => matchesFilter(tx, filter, data))
+    .filter((tx) => (focus ? matchesFocus(tx, focus, data, fallbackId) : matchesFilter(tx, filter, data)))
     .sort((a, b) => b.date.localeCompare(a.date) || b.updated_at.localeCompare(a.updated_at))
   const selectedTx = rows.find((tx) => tx.uuid === selected)
 
@@ -90,7 +114,17 @@ function TransactionList({ data, onEdit }: { data: MoneyData; onEdit: (tx: Edita
 
   return (
     <>
-      <Rail label="Método" items={FILTERS} active={filter} onSelect={setFilter} />
+      {focus ? (
+        <div className="verb-row">
+          <span className="month-label">{`Gastos · ${focus.label} · ${rangeLabel(focus.range)}`}</span>
+          <button type="button" className="verb-button" onClick={onClearFocus}>
+            <span className="key-glyph">B</span>
+            Volver a estadísticas
+          </button>
+        </div>
+      ) : (
+        <Rail label="Método" items={FILTERS} active={filter} onSelect={setFilter} />
+      )}
       <Panel>
         <table className="roster">
           <thead>
@@ -125,11 +159,6 @@ function TransactionList({ data, onEdit }: { data: MoneyData; onEdit: (tx: Edita
                   <td>
                     {row.concept}
                     {tx.notes && <span className="row-sub">{tx.notes}</span>}
-                    {tx.original_currency === 'CAD' && tx.original_amount && tx.fx_rate && (
-                      <span className="row-sub">
-                        {`${formatMoney(tx.original_amount, 'CAD')} × ${tx.fx_rate}${tx.days_worked ? ` · ${tx.days_worked} días` : ''}`}
-                      </span>
-                    )}
                   </td>
                   <td className="dim">{row.source}</td>
                   <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`}>
@@ -189,15 +218,26 @@ function TransactionList({ data, onEdit }: { data: MoneyData; onEdit: (tx: Edita
 
 export function Movimientos({ onEdit }: { onEdit: (tx: EditableTransaction) => void }) {
   const [view, setView] = useState<MovementView>('list')
+  const [focus, setFocus] = useState<ExpenseFocus | null>(null)
+  const [span, setSpan] = useState<StatsWindow>('month')
   const data = useMoneyData()
+  const header = (
+    <>
+      <StageHeader title="Movimientos" aiBridge share />
+      <Rail label="Vista" items={MOVEMENT_VIEWS} active={view} onSelect={(next) => { setView(next); setFocus(null) }} />
+    </>
+  )
+
+  if (data.loaded && view === 'stats') {
+    return <Estadisticas header={header} data={data} span={span} onSpan={setSpan} onFocus={(next) => { setFocus(next); setView('list') }} />
+  }
 
   return (
     <div className="stage-grid stage-grid--single">
       <div className="stage-main">
-        <StageHeader title="Movimientos" aiBridge share />
-        <Rail label="Vista" items={MOVEMENT_VIEWS} active={view} onSelect={setView} />
+        {header}
         {!data.loaded ? null : view === 'list' ? (
-          <TransactionList data={data} onEdit={onEdit} />
+          <TransactionList data={data} onEdit={onEdit} focus={focus} onClearFocus={() => { setFocus(null); setView('stats') }} />
         ) : (
           <Panel>
             <FooterHint>{EMPTY_HINT[view]}</FooterHint>

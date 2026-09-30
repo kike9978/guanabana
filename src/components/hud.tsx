@@ -66,23 +66,73 @@ export function Rail<T extends string>({
   )
 }
 
+export interface SeriesColumn {
+  key: string
+  label: string
+  value: number
+  previous?: number
+  display: string
+}
+
+/** One cyan meter per column. The amber tick is the previous window only. */
+export function Series({
+  columns,
+  selected,
+  onSelect,
+  label,
+}: {
+  columns: SeriesColumn[]
+  selected?: string | null
+  onSelect?: (key: string) => void
+  label: string
+}) {
+  const max = Math.max(1, ...columns.flatMap((c) => [c.value, c.previous ?? 0]))
+  const percent = (value: number) => `${Math.round((Math.max(0, value) / max) * 100)}%`
+  return (
+    <div className={`series${columns.length > 8 ? ' series--dense' : ''}`} role="group" aria-label={label}>
+      {columns.map((column) => (
+        <button
+          key={column.key}
+          type="button"
+          className="series-col"
+          aria-pressed={selected === column.key}
+          aria-label={`${column.label}: ${column.display}`}
+          onClick={() => onSelect?.(column.key)}
+        >
+          <span className="series-value">{column.display}</span>
+          <span className="series-track">
+            <span className="series-fill" style={{ height: percent(column.value) }} />
+            {column.previous !== undefined && column.previous > 0 && (
+              <span className="series-previous" style={{ bottom: percent(column.previous) }} aria-hidden="true" />
+            )}
+          </span>
+          <span className="series-label">{column.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function StatBar({
   label,
   value,
   ratio,
   tone = 'safe',
+  marker,
 }: {
   label: string
   value: string
   ratio: number
   tone?: Tone
+  marker?: number
 }) {
-  const width = `${Math.round(Math.min(Math.max(ratio, 0), 1) * 100)}%`
+  const percent = (value: number) => `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%`
   return (
     <div className={`stat-bar tone-${tone}`}>
       <span className="stat-label">{label}</span>
       <span className="stat-track">
-        <span className="stat-fill" style={{ width }} />
+        <span className="stat-fill" style={{ width: percent(ratio) }} />
+        {marker !== undefined && <span className="stat-marker" style={{ left: percent(marker) }} aria-hidden="true" />}
       </span>
       <span className="stat-value">{value}</span>
     </div>

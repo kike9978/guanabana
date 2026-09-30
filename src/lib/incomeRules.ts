@@ -1,4 +1,5 @@
-import type { BucketMove, Category, RecurringItem, Transaction } from '../db/types'
+import type { BucketMove, Category, IncomeSlot, RecurringItem, SavingsBucket, Transaction } from '../db/types'
+import { topCategoryId } from './categories'
 import { occurrencesBetween } from './cycle'
 import { dateToIso, isoToDate } from './dates'
 import { roundMoney } from './money'
@@ -13,12 +14,21 @@ export function incomeSlots(recurring: RecurringItem[]): RecurringItem[] {
   return recurring.filter((item) => item.active && item.type === 'income').sort((a, b) => a.due_day - b.due_day)
 }
 
+/** Paydays for a loan that follows the 1st, the 2nd, or every income event. */
+export function slotDays(recurring: RecurringItem[], slot: IncomeSlot): number[] {
+  const [first, second] = incomeSlots(recurring)
+  if (slot === 'first') return first ? [first.due_day] : []
+  if (slot === 'second') return second ? [second.due_day] : []
+  return [first, second].filter(Boolean).map((item) => item!.due_day)
+}
+
 export type IncomeFields = Pick<Transaction, 'type' | 'date' | 'category_id'> & { recurring_id?: string | null }
 
 export function isRuleIncome(tx: IncomeFields, categories: Category[], recurring: RecurringItem[]): boolean {
   if (tx.type !== 'income') return false
   if (tx.recurring_id && incomeSlots(recurring).some((item) => item.uuid === tx.recurring_id)) return true
-  return categories.find((c) => c.uuid === tx.category_id)?.key === MAIN_INCOME_KEY
+  if (!tx.category_id) return false
+  return categories.find((c) => c.uuid === topCategoryId(tx.category_id!, categories))?.key === MAIN_INCOME_KEY
 }
 
 function rankOf(index: number): IncomeRule | null {
@@ -130,9 +140,24 @@ export function shortfall(retirement: number, travel: number, available: number)
   return { need, short: roundMoney(Math.max(0, need - Math.max(0, available))) }
 }
 
-export function fitToAvailable(retirement: number, travel: number, available: number): { retirement: number; travel: number } {
-  const room = Math.max(0, available)
-  if (retirement + travel <= room) return { retirement, travel }
-  if (retirement <= room) return { retirement, travel: roundMoney(room - retirement) }
-  return { retirement: roundMoney(room), travel: 0 }
+export interface CustomShare {
+  bucket: SavingsBucket
+  amount: number
+}
+
+export function customShares(buckets: SavingsBucket[], rule: IncomeRule): CustomShare[] {
+  return buckets
+    .filter((b) => b.rule_type === 'custom' && !b.archived && b.income_share && b.income_share.amount > 0)
+    .filter((b) => b.income_share!.income === 'both' || b.income_share!.income === rule)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((bucket) => ({ bucket, amount: bucket.income_share!.amount }))
+}
+
+export function fitInOrder(amounts: number[], available: number): number[] {
+  let room = Math.max(0, available)
+  return amounts.map((amount) => {
+    const fitted = roundMoney(Math.min(amount, room))
+    room = roundMoney(room - fitted)
+    return fitted
+  })
 }

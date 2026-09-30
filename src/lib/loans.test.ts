@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { Loan, LoanInstallment, Transaction } from '../db/types'
-import { buildSchedule, planExtraPayment, summarizeLoan } from './loans'
+import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
+import { slotDays } from './incomeRules'
+import { buildSchedule, incomeDueDates, planExtraPayment, summarizeLoan } from './loans'
 
 const base = { updated_at: '2026-09-01T00:00:00.000Z' }
 
@@ -77,5 +78,30 @@ describe('extra payments', () => {
     expect(plan.rows[0].amount).toBeLessThanOrEqual(before)
     const principal = plan.rows.reduce((sum, row) => sum + row.principal_part, 0)
     expect(Math.round(principal * 100) / 100).toBe(plan.remaining)
+  })
+})
+
+describe('installments tied to income events', () => {
+  test('paydays start on or after the first date and clamp to the end of short months', () => {
+    expect(incomeDueDates('2026-09-20', [15, 30], 4)).toEqual(['2026-09-30', '2026-10-15', '2026-10-30', '2026-11-15'])
+    expect(incomeDueDates('2027-02-01', [30], 2)).toEqual(['2027-02-28', '2027-03-30'])
+    expect(incomeDueDates('2026-10-01', [], 3)).toEqual([])
+  })
+
+  test('a per-income schedule lands on the chosen payday, and a rate splits by those periods', () => {
+    const input = { ...loan, frequency: 'per_income' as const, income_slot: 'second' as const, first_due_date: '2026-10-01', installment_count: 3 }
+    expect(buildSchedule(input, [30]).map((row) => row.due_date)).toEqual(['2026-10-30', '2026-11-30', '2026-12-30'])
+    const both = { ...input, interest: 'fixed_rate' as const, rate_annual: 24, income_slot: 'both' as const }
+    expect(buildSchedule(both, [15, 30])[0].interest_part).toBe(120)
+    expect(buildSchedule({ ...both, income_slot: 'first' }, [15])[0].interest_part).toBe(240)
+  })
+
+  test('slot days follow the paydays sorted by day', () => {
+    const payday = (uuid: string, due_day: number) => ({ uuid, type: 'income', active: true, due_day }) as RecurringItem
+    const recurring = [payday('late', 30), payday('mid', 15)]
+    expect(slotDays(recurring, 'first')).toEqual([15])
+    expect(slotDays(recurring, 'second')).toEqual([30])
+    expect(slotDays(recurring, 'both')).toEqual([15, 30])
+    expect(slotDays([payday('only', 1)], 'second')).toEqual([])
   })
 })

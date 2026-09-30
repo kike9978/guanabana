@@ -8,7 +8,7 @@ export type AccountType = 'checking' | 'cash' | 'savings' | 'unassigned'
 export interface Account extends BaseRecord {
   name: string
   type: AccountType
-  currency: 'MXN' | 'CAD'
+  currency: 'MXN'
   current_balance: number
   balance_date: string
   archived?: boolean
@@ -48,10 +48,6 @@ export interface Transaction extends BaseRecord {
   loan_installment_id?: string | null
   loan_extra_id?: string | null
   bucket_id?: string | null
-  original_amount?: number | null
-  original_currency?: 'CAD' | null
-  fx_rate?: number | null
-  days_worked?: number | null
 }
 
 export type BucketRule = 'emergency' | 'retirement' | 'travel'
@@ -66,6 +62,12 @@ export interface SavingsBucket extends BaseRecord {
   account_id: string | null
   sort_order?: number
   archived?: boolean
+  income_share?: IncomeShare | null
+}
+
+export interface IncomeShare {
+  income: 'first' | 'second' | 'both'
+  amount: number
 }
 
 export type BucketMoveSource = 'manual' | 'first_income' | 'second_income' | 'bucket_transfer'
@@ -79,6 +81,7 @@ export interface BucketMove extends BaseRecord {
   income_tx_id?: string | null
   transfer_id?: string | null
   tx_id?: string | null
+  reverses_id?: string | null
 }
 
 export interface RecurringItem extends BaseRecord {
@@ -94,7 +97,8 @@ export interface RecurringItem extends BaseRecord {
 
 export type LoanDirection = 'borrowed' | 'lent'
 export type LoanInterest = 'none' | 'fixed_installment' | 'fixed_rate'
-export type LoanFrequency = 'monthly' | 'biweekly'
+export type LoanFrequency = 'monthly' | 'biweekly' | 'per_income'
+export type IncomeSlot = 'first' | 'second' | 'both'
 
 export interface Loan extends BaseRecord {
   name: string
@@ -106,6 +110,7 @@ export interface Loan extends BaseRecord {
   rate_annual: number | null
   installment_amount: number | null
   frequency: LoanFrequency
+  income_slot?: IncomeSlot | null
   first_due_date: string
   installment_count: number
   pay_from_account_id: string | null
@@ -129,14 +134,27 @@ export interface Category extends BaseRecord {
   key: string
   name: string
   kind: CategoryKind
+  parent_id?: string | null
+  archived?: boolean
+}
+
+export interface Budget extends BaseRecord {
+  category_id: string
+  month: string | null
+  limit_mxn: number
+}
+
+export interface ProjectionScenario extends BaseRecord {
+  name: string
+  amount: number
+  date: string
+  card_id: string | null
+  income_monthly: number | null
+  extra_expenses: number
+  daily_spend?: number
 }
 
 export interface Settings extends BaseRecord {
-  foreign_income?: boolean
-  cad_day_rate: number | null
-  fx_rate: number | null
-  fx_source: 'manual' | 'api' | null
-  fx_date?: string | null
   buffer_mxn: number
   cash_reviewed_at?: string | null
   first_income_rule: { target_bucket: 'emergency' }

@@ -1,7 +1,8 @@
+import { UNCATEGORIZED_KEY } from '../lib/categories'
 import { count, getAll, newRecord, putMany } from './db'
 import type { BucketRule, Category, CategoryKind, SavingsBucket, Settings } from './types'
 
-export const UNCATEGORIZED_KEY = 'uncategorized'
+export { UNCATEGORIZED_KEY }
 
 const CATEGORY_SEEDS: Array<[key: string, name: string, kind: CategoryKind]> = [
   ['groceries', 'Supermercado', 'expense'],
@@ -57,10 +58,6 @@ async function seedDefaults(): Promise<void> {
   if ((await count('settings')) === 0) {
     await putMany('settings', [
       newRecord<Settings>({
-        foreign_income: false,
-        cad_day_rate: null,
-        fx_rate: null,
-        fx_source: null,
         buffer_mxn: 0,
         first_income_rule: { target_bucket: 'emergency' },
         second_income_rule: { retirement_pct: 0.2, travel_mxn: 5000 },

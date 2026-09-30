@@ -28,6 +28,13 @@ export const MOVEMENT_VIEWS = [
 
 export type MovementView = (typeof MOVEMENT_VIEWS)[number]['id']
 
+export const PROJECTION_VIEWS = [
+  { id: 'buy', label: '¿Puedo comprarlo?' },
+  { id: 'budget', label: 'Presupuesto' },
+] as const
+
+export type ProjectionView = (typeof PROJECTION_VIEWS)[number]['id']
+
 export interface AddPrefill {
   amount?: number
   category_id?: string | null

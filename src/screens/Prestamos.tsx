@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { AddPrefill, AddType } from '../app/navigation'
 import { FooterHint, Panel, StatBar } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
@@ -8,7 +8,10 @@ import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { isoToDate, todayIso } from '../lib/dates'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { extraPayments, isInstallmentPaid, loanRows, paidInstallmentIds, summarizeLoan } from '../lib/loans'
+import { loanSeries, openRows } from '../lib/loanTimeline'
+import { habitualDailySpend } from '../lib/projection'
 import { ExtraPaymentForm } from './loans/ExtraPaymentForm'
+import { PayoffPanel, SeriesTable } from './loans/PayoffPanel'
 import { LoanForm } from './loans/LoanForm'
 
 const money = (value: number) => formatMoney(value, 'MXN')
@@ -168,6 +171,13 @@ export function Prestamos({ onAdd }: { onAdd: (type: AddType, prefill: AddPrefil
   const data = useMoneyData()
   const [adding, setAdding] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  const allSeries = useMemo(() => {
+    if (!data.loaded) return []
+    const today = new Date()
+    const active = data.loans.filter((loan) => loan.direction === 'borrowed' && loan.status === 'active' && openRows(loan, data).length > 0)
+    if (active.length === 0) return []
+    return loanSeries(data, active, today, { dailySpend: habitualDailySpend(data.transactions, today).perDay })
+  }, [data])
   if (!data.loaded) return null
 
   const selectedLoan = data.loans.find((loan) => loan.uuid === selected)
@@ -230,11 +240,22 @@ export function Prestamos({ onAdd }: { onAdd: (type: AddType, prefill: AddPrefil
             </table>
           )}
         </Panel>
+        {allSeries.length > 1 && (
+          <Panel title="¿Hasta cuándo? · todos los préstamos">
+            <SeriesTable series={allSeries} />
+          </Panel>
+        )}
         <FooterHint>Solo las cuotas antes de tu próximo ingreso se apartan de tu Disponible real. Lo que te deben no cuenta hasta que lo cobres.</FooterHint>
+        {allSeries.length > 1 && (
+          <FooterHint>Cada fila es un día de ingreso: las cuotas de ese ciclo y tu Disponible real proyectado, con tu gasto diario habitual.</FooterHint>
+        )}
       </div>
       {selectedLoan && (
         <aside className="dossier" aria-label={selectedLoan.name}>
           <LoanDossier key={selectedLoan.uuid} loan={selectedLoan} data={data} onAdd={onAdd} onClose={() => setSelected(null)} />
+          {selectedLoan.direction === 'borrowed' && selectedLoan.status === 'active' && (
+            <PayoffPanel key={`payoff-${selectedLoan.uuid}`} loan={selectedLoan} data={data} />
+          )}
         </aside>
       )}
     </div>

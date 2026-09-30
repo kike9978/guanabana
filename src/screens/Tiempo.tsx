@@ -3,7 +3,9 @@ import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import { useMoneyData } from '../db/useMoneyData'
-import { formatDate, formatMoney, formatMonth } from '../lib/format'
+import { dateToIso } from '../lib/dates'
+import { formatCompact, formatDate, formatMoney, formatMonth } from '../lib/format'
+import { dailyProjection, habitualDailySpend } from '../lib/projection'
 import { groupByDay, timeline, type TimelineKind } from '../lib/timeline'
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
@@ -47,6 +49,12 @@ export function Tiempo({
   const dayEvents = events.get(day) ?? []
   const selectedDate = new Date(month.getFullYear(), month.getMonth(), day)
   const empty = data.loaded && data.cards.length === 0 && data.recurring.length === 0 && data.loans.length === 0
+  const dailySpend = habitualDailySpend(data.transactions, today).perDay
+  const projection = data.loaded
+    ? dailyProjection(data, today, month, new Date(month.getFullYear(), month.getMonth() + 1, 1), { dailySpend })
+    : new Map<string, number>()
+  const projectedOn = (cell: number) => projection.get(dateToIso(new Date(month.getFullYear(), month.getMonth(), cell, 12)))
+  const selectedProjection = projectedOn(day)
 
   function shift(delta: number) {
     setOffset(offset + delta)
@@ -105,6 +113,9 @@ export function Tiempo({
                   onClick={() => setSelectedDay(cell)}
                 >
                   {cell}
+                  {projectedOn(cell) !== undefined && (
+                    <span className={`calendar-projection${projectedOn(cell)! < 0 ? ' text-heat' : ''}`}>{formatCompact(projectedOn(cell)!)}</span>
+                  )}
                   <span className="calendar-marks">
                     {(events.get(cell) ?? []).map((event) => (
                       <span key={event.key} className={`calendar-mark mark-${event.kind}${event.paid ? ' mark-paid' : ''}`} />
@@ -128,10 +139,23 @@ export function Tiempo({
             ? 'Agrega tus días de ingreso, pagos fijos, tarjetas o préstamos para verlos en el calendario.'
             : 'Los puntos apagados ya están registrados.'}
         </FooterHint>
+        {projection.size > 0 && (
+          <FooterHint>
+            {dailySpend > 0
+              ? `La cifra de cada día es tu Disponible real proyectado, con tus ingresos y pagos programados y tu gasto diario habitual (${formatMoney(dailySpend, 'MXN')}).`
+              : 'La cifra de cada día es tu Disponible real proyectado, con tus ingresos y pagos programados.'}
+          </FooterHint>
+        )}
       </div>
 
       <aside className="dossier" aria-label="Detalle del día">
         <Panel title={formatDate(selectedDate)}>
+          {selectedProjection !== undefined && (
+            <div className="readout">
+              <span className="dim">Disponible real proyectado</span>
+              <span className={`mono${selectedProjection < 0 ? ' text-heat' : ''}`}>{formatMoney(selectedProjection, 'MXN')}</span>
+            </div>
+          )}
           {dayEvents.length === 0 ? (
             <FooterHint>Nada programado este día.</FooterHint>
           ) : (

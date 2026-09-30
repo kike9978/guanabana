@@ -1,4 +1,4 @@
-import type { Loan, LoanFrequency, LoanInstallment, LoanInterest, Transaction } from '../db/types'
+import type { IncomeSlot, Loan, LoanFrequency, LoanInstallment, LoanInterest, Transaction } from '../db/types'
 import { dateToIso, isoToDate } from './dates'
 import { roundMoney } from './money'
 
@@ -8,6 +8,7 @@ export interface ScheduleInput {
   rate_annual: number | null
   installment_amount: number | null
   frequency: LoanFrequency
+  income_slot?: IncomeSlot | null
   first_due_date: string
   installment_count: number
 }
@@ -19,7 +20,28 @@ export interface ScheduleRow {
   interest_part: number
 }
 
-const PERIODS_PER_YEAR: Record<LoanFrequency, number> = { monthly: 12, biweekly: 26 }
+function periodsPerYear(input: Pick<ScheduleInput, 'frequency' | 'income_slot'>): number {
+  if (input.frequency === 'per_income') return input.income_slot === 'both' ? 24 : 12
+  return input.frequency === 'biweekly' ? 26 : 12
+}
+
+/** Paydays on or after `first`, one per installment. Days past a month's end fall on its last day. */
+export function incomeDueDates(first: string, incomeDays: number[], count: number): string[] {
+  const days = [...new Set(incomeDays)].sort((a, b) => a - b)
+  if (days.length === 0) return []
+  const start = isoToDate(first)
+  const dates: string[] = []
+  for (let month = 0; dates.length < count; month++) {
+    const year = start.getFullYear()
+    const index = start.getMonth() + month
+    const last = new Date(year, index + 1, 0).getDate()
+    for (const day of days) {
+      const date = dateToIso(new Date(year, index, Math.min(day, last), 12))
+      if (date >= first && !dates.includes(date) && dates.length < count) dates.push(date)
+    }
+  }
+  return dates
+}
 
 function dueDate(first: string, index: number, frequency: LoanFrequency): string {
   const start = isoToDate(first)
@@ -31,20 +53,23 @@ function dueDate(first: string, index: number, frequency: LoanFrequency): string
   return dateToIso(new Date(start.getFullYear(), month, Math.min(start.getDate(), last), 12))
 }
 
-export function buildSchedule(input: ScheduleInput): ScheduleRow[] {
+/** `incomeDays` are the paydays a `per_income` loan follows; without them it falls back to monthly dates. */
+export function buildSchedule(input: ScheduleInput, incomeDays: number[] = []): ScheduleRow[] {
   const n = input.installment_count
   if (!Number.isInteger(n) || n < 1 || input.principal <= 0) return []
+  const paydays = input.frequency === 'per_income' ? incomeDueDates(input.first_due_date, incomeDays, n) : []
+  const due = (i: number) => paydays[i] ?? dueDate(input.first_due_date, i, input.frequency)
 
   const rows: ScheduleRow[] = []
   let balance = input.principal
 
   if (input.interest === 'fixed_rate' && input.rate_annual && input.rate_annual > 0) {
-    const r = input.rate_annual / 100 / PERIODS_PER_YEAR[input.frequency]
+    const r = input.rate_annual / 100 / periodsPerYear(input)
     const payment = roundMoney((input.principal * r) / (1 - (1 + r) ** -n))
     for (let i = 0; i < n; i++) {
       const interest = roundMoney(balance * r)
       const principal = i === n - 1 ? roundMoney(balance) : roundMoney(payment - interest)
-      rows.push({ due_date: dueDate(input.first_due_date, i, input.frequency), amount: roundMoney(principal + interest), principal_part: principal, interest_part: interest })
+      rows.push({ due_date: due(i), amount: roundMoney(principal + interest), principal_part: principal, interest_part: interest })
       balance = roundMoney(balance - principal)
     }
     return rows
@@ -57,7 +82,7 @@ export function buildSchedule(input: ScheduleInput): ScheduleRow[] {
     const principal = i === n - 1 ? roundMoney(balance) : basePrincipal
     const amount = fixedAmount === null ? principal : principal + interestPerRow
     rows.push({
-      due_date: dueDate(input.first_due_date, i, input.frequency),
+      due_date: due(i),
       amount: roundMoney(amount),
       principal_part: principal,
       interest_part: roundMoney(Math.max(0, amount - principal)),
@@ -135,12 +160,16 @@ export function planExtraPayment(
   const open = loanRows(loan, installments).filter((row) => !isInstallmentPaid(row, paidIds))
   const remaining = roundMoney(summarizeLoan(loan, installments, transactions).remaining - amount)
   if (open.length === 0 || remaining <= 0) return { remaining: Math.max(0, remaining), replaced: open, rows: [] }
+  return { remaining, replaced: open, rows: reschedule(loan, open, remaining, mode) }
+}
 
+export function reschedule(loan: Loan, open: ScheduleRow[], remaining: number, mode: ExtraMode): ScheduleRow[] {
+  if (open.length === 0 || remaining <= 0) return []
   const first = open[0]
   let count = open.length
   if (mode === 'shorten') {
     if (loan.interest === 'fixed_rate' && loan.rate_annual) {
-      const r = loan.rate_annual / 100 / PERIODS_PER_YEAR[loan.frequency]
+      const r = loan.rate_annual / 100 / periodsPerYear(loan)
       const ratio = (remaining * r) / first.amount
       if (ratio < 1) count = Math.ceil(-Math.log(1 - ratio) / Math.log(1 + r) - 1e-9)
     } else if (first.principal_part > 0) {
@@ -149,14 +178,14 @@ export function planExtraPayment(
     count = Math.max(1, Math.min(count, open.length))
   }
 
-  const rows = buildSchedule({
+  return buildSchedule({
     principal: remaining,
     interest: loan.interest,
     rate_annual: loan.rate_annual,
     installment_amount: loan.interest === 'fixed_installment' ? roundMoney(remaining / count + first.interest_part) : null,
     frequency: loan.frequency,
+    income_slot: loan.income_slot,
     first_due_date: first.due_date,
     installment_count: count,
   }).map((row, index) => ({ ...row, due_date: open[index].due_date }))
-  return { remaining, replaced: open, rows }
 }

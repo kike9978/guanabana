@@ -31,7 +31,7 @@ Radius stays `--radius` (2px). No drop shadows, no purple, no large rounded fina
 ## Type and money
 
 - Labels: 11px uppercase, wide tracking.
-- Amounts and dates: tabular mono, `es-MX`, with `MXN` or `CAD` visible.
+- Amounts and dates: tabular mono, `es-MX`, with `MXN` visible.
 - One hero figure per screen. Inicio’s question is “¿Cuánto tengo de verdad?”.
 
 Styling is plain CSS in `src/App.css` and `src/styles/tokens.css`. Reuse the components in `src/components/hud.tsx` and `fields.tsx` before adding classes.

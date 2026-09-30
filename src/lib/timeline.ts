@@ -58,14 +58,19 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
   const loans = new Map(data.loans.filter((loan) => loan.status === 'active').map((loan) => [loan.uuid, loan]))
   const fromIso = dateToIso(from)
   const toIso = dateToIso(to)
+  const lastDue = new Map<string, string>()
+  for (const row of data.installments) {
+    if (row.status === 'scheduled' && row.due_date > (lastDue.get(row.loan_id) ?? '')) lastDue.set(row.loan_id, row.due_date)
+  }
   for (const row of data.installments) {
     const loan = loans.get(row.loan_id)
     if (!loan || row.status !== 'scheduled' || row.due_date < fromIso || row.due_date >= toIso) continue
     const borrowed = loan.direction === 'borrowed'
+    const last = lastDue.get(loan.uuid) === row.due_date
     events.push({
       key: row.uuid,
       date: isoToDate(row.due_date),
-      label: borrowed ? `Cuota ${loan.name}` : `Cobro ${loan.name}`,
+      label: `${borrowed ? (last ? 'Última cuota' : 'Cuota') : last ? 'Último cobro' : 'Cobro'} ${loan.name}`,
       amount: row.amount,
       kind: borrowed ? 'loan' : 'loan_receivable',
       paid: paid.has(row.uuid),

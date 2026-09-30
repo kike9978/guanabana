@@ -8,6 +8,11 @@
   --panel-active: rgba(186, 224, 240, 0.18);
   --line: rgba(186, 224, 240, 0.38);
   --line-strong: rgba(214, 238, 248, 0.72);
+  --line-faint: rgba(186, 224, 240, 0.14);
+  --track: rgba(186, 224, 240, 0.08);
+  --field-bg: rgba(7, 20, 28, 0.6);
+  --bar-bg: rgba(7, 20, 28, 0.85);
+  --scrim: rgba(3, 10, 14, 0.7);
   --ink: #e7f6fc;
   --ink-dim: #8fb8c9;
   --cyan: #7ec8e3;

@@ -139,6 +139,34 @@ export function FieldError({ children }: { children: ReactNode }) {
   return <p className="field-error">{children}</p>
 }
 
+export function RangeField({
+  label,
+  value,
+  display,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string
+  value: number
+  display: string
+  min: number
+  max: number
+  step: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="field range-field">
+      <span className="field-label">
+        {label}
+        <span className="range-value mono">{display}</span>
+      </span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
+  )
+}
+
 export function FieldNote({ children }: { children: ReactNode }) {
   return <p className="field-note">{children}</p>
 }

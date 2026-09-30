@@ -2,13 +2,18 @@ import { useState, type FormEvent } from 'react'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../../components/fields'
 import { isLiquid, selectable } from '../../db/accounts'
 import { createLoan } from '../../db/commitments'
-import type { LoanDirection, LoanFrequency, LoanInterest } from '../../db/types'
+import type { IncomeSlot, LoanDirection, LoanFrequency, LoanInterest } from '../../db/types'
+import { incomeSlots, slotDays } from '../../lib/incomeRules'
 import type { MoneyData } from '../../db/useMoneyData'
 import { isoToDate, todayIso } from '../../lib/dates'
 import { formatDate, formatMoney } from '../../lib/format'
 import { buildSchedule, type ScheduleRow } from '../../lib/loans'
+import { NEW_LOAN_CHECKPOINTS, newLoanPreview } from '../../lib/loanTimeline'
 import { roundMoney } from '../../lib/money'
 import { parseAmount } from '../../lib/parseAmount'
+import { habitualDailySpend } from '../../lib/projection'
+
+const IMPACT_ROWS = 6
 
 const DIRECTIONS: { value: LoanDirection; label: string }[] = [
   { value: 'borrowed', label: 'Yo debo' },
@@ -52,6 +57,7 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
   const [rate, setRate] = useState('')
   const [installment, setInstallment] = useState('')
   const [frequency, setFrequency] = useState<LoanFrequency>('monthly')
+  const [slot, setSlot] = useState<IncomeSlot>('first')
   const [firstDue, setFirstDue] = useState(todayIso())
   const [count, setCount] = useState('')
   const [settled, setSettled] = useState('')
@@ -72,16 +78,28 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
     rate_annual: interest === 'fixed_rate' ? rateValue : null,
     installment_amount: interest === 'fixed_installment' ? installmentValue : null,
     frequency,
+    income_slot: frequency === 'per_income' ? slot : null,
     first_due_date: firstDue,
     installment_count: Number.isInteger(countValue) ? countValue : 0,
   }
   const scheduleKey = JSON.stringify(scheduleInput)
   const activeOverrides = overrides.key === scheduleKey ? overrides.rows : {}
-  const preview = applyOverrides(buildSchedule(scheduleInput), activeOverrides, interest)
+  const paydays = incomeSlots(data.recurring)
+  const slotOptions: { value: IncomeSlot; label: string }[] = [
+    ...(paydays[0] ? [{ value: 'first' as const, label: paydays.length > 1 ? `1er ingreso · día ${paydays[0].due_day}` : `Mi ingreso · día ${paydays[0].due_day}` }] : []),
+    ...(paydays[1] ? [{ value: 'second' as const, label: `2º ingreso · día ${paydays[1].due_day}` }, { value: 'both' as const, label: 'Cada ingreso' }] : []),
+  ]
+  const preview = applyOverrides(buildSchedule(scheduleInput, slotDays(data.recurring, slot)), activeOverrides, interest)
   const total = roundMoney(preview.reduce((sum, row) => sum + row.amount, 0))
   const totalInterest = roundMoney(preview.reduce((sum, row) => sum + row.interest_part, 0))
   const totalPrincipal = roundMoney(preview.reduce((sum, row) => sum + row.principal_part, 0))
   const borrowed = direction === 'borrowed'
+  const [allImpact, setAllImpact] = useState(false)
+  const pending = [...preview].sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(Number.isInteger(settledValue) ? settledValue : 0)
+  const now = new Date()
+  const impact = borrowed && principalValue
+    ? newLoanPreview(data, now, name.trim() || 'Nuevo', pending, { dailySpend: habitualDailySpend(data.transactions, now).perDay })
+    : null
 
   const accountOptions = [
     { value: '', label: 'Elegir al pagar' },
@@ -145,9 +163,22 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
       <ChoiceField label="Interés" value={interest} onChange={setInterest} options={INTEREST} />
       {interest === 'fixed_rate' && <TextField label="Tasa anual (%)" value={rate} onChange={setRate} inputMode="decimal" placeholder="24" mono />}
       {interest === 'fixed_installment' && <AmountField label="Cuota que te cobran (MXN)" value={installment} onChange={setInstallment} />}
-      <ChoiceField label="Frecuencia" value={frequency} onChange={setFrequency} options={FREQUENCIES} />
+      <ChoiceField
+        label="Frecuencia"
+        value={frequency}
+        onChange={setFrequency}
+        options={paydays.length > 0 ? [...FREQUENCIES, { value: 'per_income', label: 'Por ingreso' }] : FREQUENCIES}
+      />
+      {frequency === 'per_income' && (
+        <>
+          <ChoiceField label="Se paga con" value={slot} onChange={setSlot} options={slotOptions} />
+          <FieldNote>
+            Cada cuota cae en ese día de ingreso y se paga con él. Si luego cambias tus días de ingreso, el calendario guardado no cambia; puedes editar sus fechas aquí antes de guardar.
+          </FieldNote>
+        </>
+      )}
       <div className="field-row">
-        <TextField label="Primera cuota" type="date" value={firstDue} onChange={setFirstDue} mono />
+        <TextField label={frequency === 'per_income' ? 'Desde' : 'Primera cuota'} type="date" value={firstDue} onChange={setFirstDue} mono />
         <TextField label="Número de cuotas" value={count} onChange={setCount} inputMode="numeric" placeholder="12" mono />
       </div>
       <div className="field-row">
@@ -232,6 +263,52 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
             <span>Termina</span>
             <span className="mono">{date(preview.reduce((last, row) => (row.due_date > last ? row.due_date : last), preview[0].due_date))}</span>
           </div>
+        </div>
+      )}
+
+      {impact && (
+        <div className="preview">
+          <div className="preview-head">
+            <p className="field-label">Cómo cambia tu Disponible real</p>
+            {impact.points.length > IMPACT_ROWS && (
+              <button type="button" className="panel-verb" onClick={() => setAllImpact(!allImpact)}>
+                {allImpact ? 'Resumen' : 'Ver todos'}
+              </button>
+            )}
+          </div>
+          <table className="roster requirements">
+            <thead>
+              <tr>
+                <th scope="col">Ingreso</th>
+                <th scope="col" className="num">Cuota</th>
+                <th scope="col" className="num">Sin préstamo</th>
+                <th scope="col" className="num">Con préstamo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(allImpact ? impact.points : impact.points.slice(0, IMPACT_ROWS)).map((point, index) => (
+                <tr key={point.date.getTime()}>
+                  <td className="mono">
+                    {formatDate(point.date)}
+                    {index === 0 && <span className="row-sub">Hoy</span>}
+                  </td>
+                  <td className="num mono">{point.installments > 0 ? money(point.installments) : '—'}</td>
+                  <td className="num mono dim">{money(point.without)}</td>
+                  <td className={`num mono${point.with < 0 ? ' text-heat' : point.with < point.installments ? ' text-amber' : ''}`}>{money(point.with)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="readout">
+            <span>Punto más bajo con el préstamo · {formatDate(impact.lowest.date)}</span>
+            <span className={`mono${impact.lowest.with < 0 ? ' text-heat' : ''}`}>{money(impact.lowest.with)}</span>
+          </div>
+          <FieldNote>
+            {impact.lowest.with < 0
+              ? `Con estas cuotas tu Disponible real quedaría en ${money(impact.lowest.with)} el ${formatDate(impact.lowest.date)}. Puedes probar más cuotas o una fecha distinta.`
+              : 'Proyección con tus ingresos, pagos fijos, otros préstamos y tu gasto diario habitual. No cuenta el dinero del préstamo, que normalmente ya tiene destino.'}
+            {impact.truncated && ` Se muestran los primeros ${NEW_LOAN_CHECKPOINTS} ingresos.`}
+          </FieldNote>
         </div>
       )}
 

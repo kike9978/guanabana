@@ -1,4 +1,4 @@
-export type Currency = 'MXN' | 'CAD'
+export type Currency = 'MXN'
 
 const LOCALE = 'es-MX'
 
@@ -30,6 +30,14 @@ export function formatAmount(amount: number): string {
 
 export function formatMoney(amount: number, currency: Currency): string {
   return `${formatAmount(amount)} ${currency}`
+}
+
+export function formatCompact(amount: number): string {
+  const abs = Math.abs(amount)
+  const sign = amount < 0 ? '-' : ''
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`
+  return `${sign}${Math.round(abs)}`
 }
 
 export function formatDate(date: Date): string {

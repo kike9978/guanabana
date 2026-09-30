@@ -2,6 +2,7 @@ import { UNCATEGORIZED_KEY } from './seed'
 import type {
   Account,
   BucketMove,
+  Budget,
   Category,
   CreditCard,
   Loan,
@@ -30,6 +31,7 @@ export interface MoneyData {
   installments: LoanInstallment[]
   buckets: SavingsBucket[]
   bucketMoves: BucketMove[]
+  budgets: Budget[]
   settings: Settings | undefined
 }
 
@@ -43,10 +45,11 @@ export function useMoneyData(): MoneyData {
   const installments = useRecords<LoanInstallment>('loan_installments')
   const buckets = useRecords<SavingsBucket>('savings_buckets')
   const bucketMoves = useRecords<BucketMove>('bucket_moves')
+  const budgets = useRecords<Budget>('budgets')
   const settings = useRecords<Settings>('settings')
 
   return {
-    loaded: [accounts, cards, categories, transactions, recurring, loans, installments, buckets, bucketMoves, settings].every(
+    loaded: [accounts, cards, categories, transactions, recurring, loans, installments, buckets, bucketMoves, budgets, settings].every(
       (rows) => rows !== null,
     ),
     accounts: accounts ?? [],
@@ -60,6 +63,7 @@ export function useMoneyData(): MoneyData {
     installments: installments ?? [],
     buckets: [...(buckets ?? [])].sort(compareBuckets),
     bucketMoves: bucketMoves ?? [],
+    budgets: budgets ?? [],
     settings: settings?.[0],
   }
 }

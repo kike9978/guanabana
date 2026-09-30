@@ -9,7 +9,9 @@ import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { nextDateForDay, todayIso } from '../lib/dates'
 import { formatDate, formatMoney } from '../lib/format'
 import { pickValid } from '../lib/forms'
+import { categoryOptions as categoryOptionsFor } from '../lib/categories'
 import { parseAmount, parseDay } from '../lib/parseAmount'
+import { CategoryPicker } from '../components/CategoryPicker'
 
 type Kind = RecurringItem['type']
 
@@ -44,7 +46,8 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
     { value: '', label: 'Sin cuenta fija' },
     ...selectable(data.accounts, [item?.account_id]).filter(isLiquid).map((a) => ({ value: a.uuid, label: a.name })),
   ]
-  const categoryOptions = data.categories.filter((c) => c.kind === (kind === 'bill' ? 'expense' : 'income')).map((c) => ({ value: c.uuid, label: c.name }))
+  const categoryKind = kind === 'bill' ? 'expense' : 'income'
+  const categoryOptions = categoryOptionsFor(data.categories, categoryKind, [item?.category_id])
   const activeCategory = pickValid(categoryId, categoryOptions)
 
   async function submit(event: FormEvent) {
@@ -82,7 +85,9 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         <AmountField label={copy.amountLabel} value={amount} onChange={setAmount} />
       </div>
       <SelectField label={kind === 'income' ? 'Llega a' : 'Se paga desde'} value={accountId ?? ''} onChange={setAccountId} options={accountOptions} />
-      {activeCategory && <SelectField label="Categoría" value={activeCategory} onChange={setCategoryId} options={categoryOptions} />}
+      {activeCategory && (
+        <CategoryPicker categories={data.categories} kind={categoryKind} value={activeCategory} onChange={setCategoryId} keep={[item?.category_id]} />
+      )}
       {item ? (
         <FieldNote>Los pagos que ya registraste no cambian.</FieldNote>
       ) : (

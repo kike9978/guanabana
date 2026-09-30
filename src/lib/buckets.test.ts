@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Account, BucketMove, RecurringItem, SavingsBucket } from '../db/types'
-import { bucketBalance, bucketHistory, bucketsInLiquid, incomeEventsUntil, isHeldInLiquid, targetPace } from './buckets'
+import { bucketBalance, bucketHistory, bucketsInLiquid, incomeEventsUntil, isHeldInLiquid, setAsideThisCycle, targetPace } from './buckets'
 import { computeRealAvailable } from './realAvailable'
 
 const stamp = '2026-09-01T00:00:00.000Z'
@@ -103,6 +103,23 @@ describe('target pace', () => {
     const past = { ...car, target_date: '2026-09-01' }
     expect(targetPace(past, 2000, paydays, today)).toMatchObject({ overdue: true, perIncome: null })
     expect(targetPace(past, 10000, paydays, today)).toMatchObject({ remaining: 0, overdue: false })
+  })
+
+  test('set aside this cycle counts deposits since the last payday, not moves between buckets', () => {
+    const move = (uuid: string, amount: number, date: string, extra = {}) =>
+      ({ uuid, updated_at: '', bucket_id: 'car', amount, date, reason: '', source: 'manual', ...extra }) as BucketMove
+    const moves = [
+      move('old', 900, '2026-09-14'),
+      move('a', 500, '2026-09-15'),
+      move('b', 300, '2026-09-20', { source: 'bucket_transfer' }),
+      move('c', -200, '2026-09-21'),
+      move('d', 250, '2026-09-22', { reverses_id: 'x' }),
+      move('e', 700, '2026-09-28'),
+    ]
+    const result = setAsideThisCycle(car, moves, paydays, today)
+    expect(result.since.getDate()).toBe(15)
+    expect(result.amount).toBe(1200)
+    expect(result.required).toBe(1516.67)
   })
 
   test('no target or no date means no pace', () => {

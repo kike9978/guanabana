@@ -17,7 +17,7 @@ export function isSystemBucket(bucket: SavingsBucket): boolean {
 
 export async function createBucket(
   existing: SavingsBucket[],
-  fields: Pick<SavingsBucket, 'name' | 'target' | 'target_date' | 'account_id'>,
+  fields: Pick<SavingsBucket, 'name' | 'target' | 'target_date' | 'account_id' | 'income_share'>,
 ): Promise<SavingsBucket> {
   const order = Math.max(0, ...existing.filter((b) => b.rule_type === 'custom').map((b) => b.sort_order ?? 0)) + 1
   const bucket = newRecord<SavingsBucket>({ ...fields, rule_type: 'custom', sort_order: order, archived: false })
@@ -117,7 +117,7 @@ export async function applyIncomeRule(fields: {
 
 export async function updateBucket(
   bucket: SavingsBucket,
-  fields: Pick<SavingsBucket, 'name' | 'target' | 'target_date' | 'account_id'>,
+  fields: Pick<SavingsBucket, 'name' | 'target' | 'target_date' | 'account_id' | 'income_share'>,
 ): Promise<void> {
   const updated: SavingsBucket = { ...bucket, ...fields, updated_at: new Date().toISOString() }
   await writeAcross([{ store: 'savings_buckets', put: [updated] }])

@@ -1,6 +1,6 @@
 import type { Account, BucketMove, RecurringItem, SavingsBucket } from '../db/types'
-import { FALLBACK_CYCLE_DAYS, occurrencesBetween } from './cycle'
-import { daysBetween, isoToDate } from './dates'
+import { FALLBACK_CYCLE_DAYS, incomeCycle, occurrencesBetween } from './cycle'
+import { dateToIso, daysBetween, isoToDate } from './dates'
 import { roundMoney } from './money'
 
 export function bucketBalance(bucket: SavingsBucket, moves: BucketMove[]): number {
@@ -47,6 +47,25 @@ export function targetPace(bucket: SavingsBucket, balance: number, recurring: Re
     perIncome: remaining > 0 && events > 0 ? Math.ceil((remaining / events) * 100) / 100 : null,
     overdue: remaining > 0 && events === 0,
   }
+}
+
+export interface CycleSetAside {
+  since: Date
+  amount: number
+  required: number | null
+}
+
+export function setAsideThisCycle(bucket: SavingsBucket, moves: BucketMove[], recurring: RecurringItem[], today: Date): CycleSetAside {
+  const since = incomeCycle(recurring, today).start
+  const from = dateToIso(since)
+  const cycleMoves = moves.filter((move) => move.bucket_id === bucket.uuid && move.date >= from)
+  const amount = cycleMoves
+    .filter((move) => move.amount > 0 && move.source !== 'bucket_transfer' && !move.reverses_id)
+    .reduce((sum, move) => sum + move.amount, 0)
+  const startBalance = bucketBalance(bucket, moves) - cycleMoves.reduce((sum, move) => sum + move.amount, 0)
+  const dayBefore = new Date(since.getFullYear(), since.getMonth(), since.getDate() - 1, 12)
+  const required = targetPace(bucket, roundMoney(startBalance), recurring, dayBefore)?.perIncome ?? null
+  return { since, amount: roundMoney(amount), required }
 }
 
 export interface BucketFunding {
