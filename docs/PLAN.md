@@ -263,7 +263,9 @@ AI jobs, share events, and bucket moves are append-only.
 
 ### Accounts and cards
 
-- [x] Accounts: Bank MXN, Cash MXN, Savings.
+- [x] Accounts: Bank MXN, Cash MXN, Savings. Savings shows as **Ahorro o inversión** and covers investment accounts too; there is no investment logic. `isLiquid` (`src/lib/accounts.ts`) is the one place that decides what counts in Disponible real.
+- [x] An Ahorro account's dossier breaks its balance into the apartados that live there plus **Sin apartar** (balance minus those apartados). When the apartados add up to more, it shows the gap in amber and **Ajustar {cuenta} a tus apartados**, one confirmed `adjustment`. An account with apartados cannot be archived.
+- [x] **Actualizar saldo** on an Ahorro account with apartados: the real balance, the gap as Rendimientos or Ajuste, and one editable line per apartado, prefilled in proportion to its balance (in cents; the remainder goes to the largest). What is not assigned stays Sin apartar. A line cannot take an apartado below zero. One write saves the `adjustment` and a `manual` move per line (`tx_id`); deleting the adjustment reverses them. Interest is not income.
 - [x] Each account stores type, currency, and current balance.
 - [x] Credit cards: name, limit, balance, statement day, due day, strategy (`full` default).
 - [ ] Every strategy reserves the whole card balance (minus unbilled MSI). Saldo al corte and Pago mínimo only change the next payment.
@@ -339,6 +341,11 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Three grade cards: Emergency, Retirement, Travel. Balance, target, progress bar, rule history.
 - [x] Manual add and withdraw. Withdraw asks for a reason and shows the impact on Real Available.
 - [x] Bucket balances held in bank or cash count in `Virtual_Buckets_In_Liquid`. A bucket pointed at a savings account is already outside liquid and does not count twice.
+- [x] An apartado in an Ahorro account keeps that account in step. The account holds the money (location), the apartado says what it is for (purpose); both are stored, and every write that touches both goes through `transferWithBuckets` or a linked `adjustment`, one write with `tx_id` on the moves. Such rows are delete-only and deleting one appends the reversing moves.
+- [x] **Depositar** replaces Apartar for those apartados. Desde lists every active account; Hacia is the apartado's account. The preview shows Desde, Hacia, the apartado, and Disponible real before and after (it drops only when Desde is liquid). **Ya está en {cuenta}** claims pesos already Sin apartar there, capped at that amount, with no transfer. A Desde balance lower than the amount warns and does not block.
+- [x] **Retirar** on those apartados asks where the money goes: **Traer a** a liquid account (a transfer; Disponible real rises) or **Se queda en {cuenta}** (the apartado move only; the pesos become Sin apartar). The reason stays required.
+- [x] The transfer form asks **Para qué apartado** when Hacia is an Ahorro account with apartados, and **De qué apartado sale** when Desde is one. One apartado is preselected; with several, Sin apartado is. Editing a plain transfer does not add an apartado.
+- [x] Apartados in bank or cash keep Apartar and Retirar. The Apartar note points to Editar → Dónde está, and changing Dónde está on an apartado with money says that it does not transfer anything.
 - [x] Ajustes holds the buffer and the second-income split.
 
 ### Saldo ya apartado
@@ -351,6 +358,7 @@ Apartar reserves pesos that already sit in Banco, Efectivo, or Saldo sin origen,
 - [x] The new total cannot fall below the part already reserved from liquid (Apartar, income rules, moves between apartados). That part is released only with Retirar, which still frees Disponible real. Copy names the reserved amount.
 - [x] Retirar spends opening money only after the reserved part is gone. That withdrawal asks for a reason and does not change Disponible real, because those pesos were never in liquid. History keeps the opening row; undo appends a reversing move (`reverses_id`).
 - [x] **Ya está en mi banco** converts the opening portion into a normal reserve. Confirm shows the drop in Disponible real before the write. The conversion appends a reversing opening move and a `manual` move for the same amount.
+- [x] For an apartado in an Ahorro account, **Fijar saldo** asks “¿Cuánto hay hoy en este apartado?” and writes no `opening` row, because the money is in an account the app tracks. A higher total first claims that account's Sin apartar pesos, then raises the account by the rest with one `adjustment` linked to a `manual` move. A lower total leaves the difference in the account, Sin apartar. The preview shows the apartado, the account, Sin apartar, and Disponible real unchanged.
 - [x] The grade card, its progress bar, and the pace row use the full apartado balance, opening included. The income-rule remainder keeps using `Virtual_Buckets_In_Liquid`, so an opening amount is not subtracted twice and does not shrink the suggestion. No second money path.
 
 ### Custom buckets
@@ -669,6 +677,8 @@ These are requirements, not later nice-to-haves. Cover them in the phase that ow
 - [ ] Refund of a grocery line: lower the expense total, do not plot it as a cheaper price.
 - [ ] Missed loan installment: mark it late, keep it in the next cycle’s reserve, and use neutral copy.
 - [ ] Installment larger than a cycle’s income: warn on the timeline, and offer a bucket transfer or a scenario with an extra payment later.
+- [ ] Mover between apartados that live in different accounts (one in GBM, one in bank or another Ahorro account) moves only the apartados, not the account money. Pair it with a transfer or limit it to the same account.
+- [ ] Changing an account's type after creation (bank or cash ↔ Ahorro o inversión), with the Disponible real change before confirm.
 - [ ] Lender changes the rate or schedule: edit the remaining schedule only. Paid rows never change.
 - [ ] Loan paid early: status becomes `paid`, the remaining scheduled rows are removed after confirm, and the timeline updates.
 - [ ] Money lent is never repaid: the user can write it off. It never touched Disponible real, so nothing moves.

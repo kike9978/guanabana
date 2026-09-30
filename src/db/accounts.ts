@@ -9,7 +9,7 @@ export const OPENING_ACCOUNT_NAME = 'Saldo sin origen'
 export const ACCOUNT_TYPE_LABEL: Record<AccountType, string> = {
   checking: 'Banco',
   cash: 'Efectivo',
-  savings: 'Ahorro',
+  savings: 'Ahorro o inversión',
   unassigned: 'Sin origen',
 }
 
@@ -23,9 +23,7 @@ export function findOpeningAccount(accounts: Account[]): Account | undefined {
   return accounts.find((account) => account.type === 'unassigned')
 }
 
-export function isLiquid(account: Account): boolean {
-  return account.type !== 'savings'
-}
+export { isLiquid } from '../lib/accounts'
 
 export async function saveOpeningBalance(amount: number, balanceDate: string): Promise<void> {
   const existing = findOpeningAccount(await getAll<Account>('accounts'))

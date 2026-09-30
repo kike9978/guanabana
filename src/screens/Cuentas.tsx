@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, TextField } from '../components/fields'
-import { FooterHint, Panel } from '../components/hud'
+import { FooterHint, Panel, StatBar } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import {
   ACCOUNT_TYPE_LABEL,
@@ -8,14 +8,17 @@ import {
   canArchive,
   createAccount,
   createCard,
+  isLiquid,
   reconcileBalance,
   setAccountArchived,
   setCardArchived,
   updateAccount,
   updateCard,
 } from '../db/accounts'
+import { updateSavingsBalance } from '../db/buckets'
 import type { Account, AccountType, CreditCard, PaymentStrategy } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
+import { bucketsInAccount, proportionalSplit, unassignedIn } from '../lib/buckets'
 import { formatDate, formatMoney } from '../lib/format'
 import { categoryLabel } from '../lib/categories'
 import { dateToIso, isoToDate } from '../lib/dates'
@@ -27,15 +30,15 @@ import { lastCut, nextPayment, nextPayments, paymentLabel, statementOpenForPayme
 
 type NewAccountType = Exclude<AccountType, 'unassigned'>
 export type Selection = { kind: 'account'; uuid: string } | { kind: 'card'; uuid: string }
-type DossierMode = 'view' | 'edit' | 'reconcile'
+type DossierMode = 'view' | 'edit' | 'reconcile' | 'cover'
 
 const ACCOUNT_TYPES: { value: NewAccountType; label: string }[] = [
-  { value: 'checking', label: 'Banco' },
-  { value: 'cash', label: 'Efectivo' },
-  { value: 'savings', label: 'Ahorro' },
+  { value: 'checking', label: ACCOUNT_TYPE_LABEL.checking },
+  { value: 'cash', label: ACCOUNT_TYPE_LABEL.cash },
+  { value: 'savings', label: ACCOUNT_TYPE_LABEL.savings },
 ]
 
-const LIQUID_TYPES = ACCOUNT_TYPES.filter((option) => option.value !== 'savings')
+const LIQUID_TYPES = ACCOUNT_TYPES.filter((option) => isLiquid({ type: option.value }))
 
 const STRATEGIES = (Object.keys(STRATEGY_LABEL) as PaymentStrategy[]).map((value) => ({ value, label: STRATEGY_LABEL[value] }))
 
@@ -47,7 +50,7 @@ function AccountForm({ account, onDone }: { account?: Account; onDone: () => voi
   const [balance, setBalance] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const typeOptions = account ? (account.type === 'savings' ? [] : LIQUID_TYPES) : ACCOUNT_TYPES
+  const typeOptions = account ? (isLiquid(account) ? LIQUID_TYPES : []) : ACCOUNT_TYPES
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -75,7 +78,9 @@ function AccountForm({ account, onDone }: { account?: Account; onDone: () => voi
       {account ? (
         <FieldNote>El saldo se cambia con Ajustar saldo, para que quede registrado.</FieldNote>
       ) : (
-        type === 'savings' && <FieldNote>Una cuenta de ahorro no cuenta en tu Disponible real.</FieldNote>
+        !isLiquid({ type }) && (
+          <FieldNote>No cuenta en tu Disponible real. Si su saldo cambia por rendimientos, actualízalo desde aquí y reparte la diferencia en tus apartados.</FieldNote>
+        )
       )}
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={account ? 'Guardar cambios' : 'Guardar cuenta'} saving={saving} onCancel={onDone} />
@@ -215,6 +220,7 @@ export function ReconcileForm({
 }) {
   const record = target.kind === 'account' ? data.accounts.find((a) => a.uuid === target.uuid) : data.cards.find((c) => c.uuid === target.uuid)
   const [actual, setActual] = useState('')
+  const [lines, setLines] = useState<Record<string, string> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   if (!record) return null
@@ -224,13 +230,43 @@ export function ReconcileForm({
   const impact = value === null ? 0 : roundMoney(realAvailableWith(data, record, value) - realAvailableWith(data, record, record.current_balance))
   const isCard = target.kind === 'card'
   const cardMsi = isCard ? (msiPendingByCard(data.transactions, [record as CreditCard], new Date())[record.uuid] ?? 0) : 0
+  const savingsAccount = !isCard && !isLiquid(record as Account) ? (record as Account) : null
+  const held = savingsAccount ? bucketsInAccount(savingsAccount.uuid, data.buckets, data.bucketMoves) : []
+  const splitting = held.length > 0 && gap !== null && gap !== 0
+  const suggested = splitting ? proportionalSplit(gap, held.map((row) => ({ id: row.bucket.uuid, weight: row.balance }))) : {}
+  const lineText = (id: string) => (lines ? (lines[id] ?? '') : String(suggested[id] ?? 0))
+  const lineValue = (id: string) => (lines ? parseAmount(lines[id] || '0') : (suggested[id] ?? 0))
+  const assigned = roundMoney(held.reduce((sum, row) => sum + (lineValue(row.bucket.uuid) ?? 0), 0))
+  const leftover = gap === null ? 0 : roundMoney(gap - assigned)
+  const unassigned = savingsAccount ? unassignedIn(savingsAccount, data.buckets, data.bucketMoves) : 0
+  const unassignedAfter = roundMoney(unassigned + leftover)
+
+  function editLine(id: string, text: string) {
+    const current = Object.fromEntries(held.map((row) => [row.bucket.uuid, lineText(row.bucket.uuid)]))
+    setLines({ ...current, [id]: text })
+    setError(null)
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (value === null || !record) return setError('Escribe el saldo que ves en tu banco o en tu cartera.')
+    if (splitting) {
+      if (held.some((row) => lineValue(row.bucket.uuid) === null)) return setError('Revisa el monto de cada apartado.')
+      const below = held.find((row) => row.balance + (lineValue(row.bucket.uuid) ?? 0) < 0)
+      if (below) return setError(`${below.bucket.name} tiene ${money(below.balance)}. No puede quedar abajo de cero.`)
+      if (unassignedAfter < 0 && unassignedAfter < unassigned) return setError(`Tus apartados sumarían más que el saldo de ${record.name}.`)
+    }
     setSaving(true)
     try {
-      if (gap !== 0) await reconcileBalance(target.kind === 'account' ? { account: record as Account } : { card: record as CreditCard }, value)
+      if (splitting && savingsAccount) {
+        await updateSavingsBalance(
+          savingsAccount,
+          value,
+          held.map((row) => ({ bucket: row.bucket, amount: lineValue(row.bucket.uuid) ?? 0 })),
+        )
+      } else if (gap !== 0) {
+        await reconcileBalance(target.kind === 'account' ? { account: record as Account } : { card: record as CreditCard }, value)
+      }
       await onSaved?.()
       onDone()
     } catch {
@@ -242,9 +278,9 @@ export function ReconcileForm({
   return (
     <form className="form" onSubmit={submit} noValidate>
       <AmountField
-        label={isCard ? '¿Cuánto debes de verdad? (MXN)' : '¿Cuánto hay de verdad? (MXN)'}
+        label={isCard ? '¿Cuánto debes de verdad? (MXN)' : savingsAccount ? `¿Cuánto hay hoy en ${record.name}? (MXN)` : '¿Cuánto hay de verdad? (MXN)'}
         value={actual}
-        onChange={(v) => { setActual(v); setError(null) }}
+        onChange={(v) => { setActual(v); setLines(null); setError(null) }}
         invalid={error !== null}
         autoFocus
       />
@@ -258,8 +294,8 @@ export function ReconcileForm({
           <span className="mono">{value === null ? '—' : money(value)}</span>
         </div>
         <div className="dossier-total">
-          <span>Diferencia</span>
-          <span className={`mono${gap ? ' text-amber' : ''}`}>{gap === null ? '—' : money(gap)}</span>
+          <span>{savingsAccount && gap ? (gap > 0 ? 'Rendimientos' : 'Ajuste') : 'Diferencia'}</span>
+          <span className={`mono${gap ? ' text-amber' : ''}`}>{gap === null ? '—' : `${gap > 0 && savingsAccount ? '+' : ''}${money(gap)}`}</span>
         </div>
         {gap !== null && gap !== 0 && (
           <div className="readout">
@@ -268,14 +304,94 @@ export function ReconcileForm({
           </div>
         )}
       </div>
+      {splitting && (
+        <>
+          {held.map((row) => (
+            <AmountField
+              key={row.bucket.uuid}
+              label={`${row.bucket.name} · tiene ${money(row.balance)} (MXN)`}
+              value={lineText(row.bucket.uuid)}
+              onChange={(v) => editLine(row.bucket.uuid, v)}
+            />
+          ))}
+          <div className="stat-list">
+            <div className="readout">
+              <span className="dim">Sin apartar</span>
+              <span className="mono">{`${leftover > 0 ? '+' : ''}${money(leftover)}`}</span>
+            </div>
+            <div className="readout">
+              <span className="dim">{`Sin apartar en ${record.name} después`}</span>
+              <span className={`mono${unassignedAfter < 0 ? ' text-amber' : ''}`}>{money(unassignedAfter)}</span>
+            </div>
+          </div>
+          <div className="verb-row">
+            <button type="button" className="verb-button" onClick={() => setLines(null)}>
+              Repartir por saldo
+            </button>
+            <button type="button" className="verb-button" onClick={() => setLines(Object.fromEntries(held.map((row) => [row.bucket.uuid, '0'])))}>
+              Todo a Sin apartar
+            </button>
+          </div>
+        </>
+      )}
       {isCard && cardMsi > 0 && (
         <FieldNote>Escribe la deuda total, con los {money(cardMsi)} a meses que aún no llegan a tu estado de cuenta.</FieldNote>
       )}
       <FieldNote>
-        {gap === 0 ? 'Todo cuadra. No hace falta ajustar.' : 'La diferencia se registra como un ajuste en Movimientos. Puedes eliminarlo después.'}
+        {gap === 0
+          ? 'Todo cuadra. No hace falta ajustar.'
+          : splitting
+            ? 'La diferencia se reparte en tus apartados. Lo que no asignes queda sin apartar. Se registra como un ajuste que puedes eliminar después.'
+            : 'La diferencia se registra como un ajuste en Movimientos. Puedes eliminarlo después.'}
       </FieldNote>
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={gap === 0 ? 'Listo' : 'Registrar ajuste'} saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function CoverForm({ data, account, onDone }: { data: MoneyData; account: Account; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const held = roundMoney(bucketsInAccount(account.uuid, data.buckets, data.bucketMoves).reduce((sum, row) => sum + row.balance, 0))
+  const gap = roundMoney(held - account.current_balance)
+  const impact = roundMoney(realAvailableWith(data, account, held) - realAvailableWith(data, account, account.current_balance))
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await reconcileBalance({ account }, held)
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <div className="stat-list">
+        <div className="readout">
+          <span className="dim">{`Saldo de ${account.name}`}</span>
+          <span className="mono">{money(account.current_balance)}</span>
+        </div>
+        <div className="readout">
+          <span className="dim">Suma de tus apartados</span>
+          <span className="mono">{money(held)}</span>
+        </div>
+        <div className="dossier-total">
+          <span>Ajuste</span>
+          <span className="mono text-amber">{`+${money(gap)}`}</span>
+        </div>
+        <div className="readout">
+          <span className="dim">Cambio en Disponible real</span>
+          <span className="mono">{impact === 0 ? 'Sin cambio' : `${impact > 0 ? '+' : ''}${money(impact)}`}</span>
+        </div>
+      </div>
+      <FieldNote>{`${account.name} queda en ${money(held)}, lo que suman tus apartados. Tus otras cuentas no cambian. Se registra como un ajuste que puedes eliminar después.`}</FieldNote>
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Registrar ajuste" saving={saving} onCancel={onDone} />
     </form>
   )
 }
@@ -289,6 +405,10 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
   if (!record) return null
 
   const isOpening = account?.type === 'unassigned'
+  const isSavings = account !== undefined && !isLiquid(account)
+  const held = account && isSavings ? bucketsInAccount(account.uuid, data.buckets, data.bucketMoves) : []
+  const unassigned = account && held.length > 0 ? unassignedIn(account, data.buckets, data.bucketMoves) : 0
+  const scale = Math.max(1, account?.current_balance ?? 0, ...held.map((row) => row.balance))
   const movements = data.transactions.filter((tx) =>
     card ? tx.cc_id === card.uuid : tx.account_id === record.uuid || tx.to_account_id === record.uuid,
   ).length
@@ -311,6 +431,9 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
 
   async function toggleArchive() {
     if (!record) return
+    if (!record.archived && held.length > 0) {
+      return setError('Hay apartados en esta cuenta. Cambia su Dónde está en Ahorro antes de archivarla.')
+    }
     if (!record.archived && !canArchive(record)) {
       return setError(card ? 'Liquida la deuda o ajústala a 0 antes de archivar.' : 'Deja el saldo en 0 antes de archivar: transfiérelo o ajústalo.')
     }
@@ -335,6 +458,7 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
       {mode === 'edit' && account && <AccountForm account={account} onDone={() => setMode('view')} />}
       {mode === 'edit' && card && <CardForm card={card} onDone={() => setMode('view')} />}
       {mode === 'reconcile' && <ReconcileForm data={data} target={selection} onDone={() => setMode('view')} />}
+      {mode === 'cover' && account && <CoverForm data={data} account={account} onDone={() => setMode('view')} />}
       {mode === 'view' && (
         <>
           <div className="stat-list">
@@ -387,6 +511,24 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
               <span className="mono">{lastAdjustment ? formatDate(isoToDate(lastAdjustment.date)) : '—'}</span>
             </div>
           </div>
+          {held.length > 0 && (
+            <div className="stat-list">
+              {held.map((row) => (
+                <StatBar key={row.bucket.uuid} label={row.bucket.name} value={money(row.balance)} ratio={row.balance / scale} />
+              ))}
+              <StatBar label="Sin apartar" value={money(unassigned)} ratio={unassigned / scale} tone={unassigned < 0 ? 'tight' : 'safe'} />
+            </div>
+          )}
+          {unassigned < 0 && account && (
+            <>
+              <FieldNote>{`Tus apartados suman ${money(-unassigned)} más que el saldo de ${account.name}.`}</FieldNote>
+              <div className="verb-row">
+                <button type="button" className="verb-button" onClick={() => setMode('cover')}>
+                  {`Ajustar ${account.name} a tus apartados`}
+                </button>
+              </div>
+            </>
+          )}
           {msiRows.length > 0 && (
             <table className="roster">
               <thead>
@@ -414,7 +556,7 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
             {!record.archived && (
               <button type="button" className="verb-button verb-primary" onClick={() => setMode('reconcile')}>
                 <span className="key-glyph">A</span>
-                Ajustar saldo
+                {isSavings ? 'Actualizar saldo' : 'Ajustar saldo'}
               </button>
             )}
             {!record.archived && !isOpening && (
@@ -436,7 +578,9 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
               ? 'Archivada: no aparece al registrar, pero su historial se queda.'
               : isOpening
                 ? 'El saldo sin origen se ajusta desde Inicio o se transfiere a una cuenta.'
-                : 'Ajusta cuando tu banco o tu cartera no coincida con la app.'}
+                : isSavings
+                  ? 'Actualiza el saldo cuando veas tu estado de cuenta. Los rendimientos se reparten en tus apartados.'
+                  : 'Ajusta cuando tu banco o tu cartera no coincida con la app.'}
           </FooterHint>
         </>
       )}

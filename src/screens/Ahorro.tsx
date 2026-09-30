@@ -3,11 +3,15 @@ import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, StatBar } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
-import { ACCOUNT_TYPE_LABEL, selectable } from '../db/accounts'
+import { ACCOUNT_TYPE_LABEL, isLiquid, selectable } from '../db/accounts'
 import {
   BUCKET_SOURCE_LABEL,
+  assignUnassigned,
   createBucket,
+  depositToBucket,
   fijarSaldo,
+  fijarSaldoInAccount,
+  fundFromBucket,
   isSystemBucket,
   moveToBucket,
   recognizeOpening,
@@ -18,10 +22,24 @@ import {
   updateBucket,
   withdrawFromBucket,
 } from '../db/buckets'
-import type { IncomeShare, SavingsBucket } from '../db/types'
+import type { Account, IncomeShare, SavingsBucket } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
-import { bucketBalance, bucketHistory, fijarGap, isHeldInLiquid, openingBalance, reservedBalance, setAsideThisCycle, targetPace, withdrawSplit } from '../lib/buckets'
+import {
+  bucketBalance,
+  bucketHistory,
+  fijarGap,
+  fijarInAccountSplit,
+  homeAccount,
+  isHeldInLiquid,
+  openingBalance,
+  reservedBalance,
+  setAsideThisCycle,
+  targetPace,
+  unassignedIn,
+  withdrawSplit,
+} from '../lib/buckets'
 import { isoToDate } from '../lib/dates'
+import { pickValid } from '../lib/forms'
 import { incomeRank, isRuleIncome, ruleMoves, type IncomeRule } from '../lib/incomeRules'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { roundMoney } from '../lib/money'
@@ -42,6 +60,15 @@ const SHARE_OPTIONS: { value: ShareChoice; label: string }[] = [
 ]
 
 const money = (value: number) => formatMoney(value, 'MXN')
+
+function Change({ label, before, after, total = false }: { label: string; before: number; after: number; total?: boolean }) {
+  return (
+    <div className={total ? 'dossier-total' : 'readout'}>
+      <span className={total ? undefined : 'dim'}>{label}</span>
+      <span className={`mono${after < 0 ? ' text-heat' : ''}`}>{before === after ? money(after) : `${money(before)} → ${money(after)}`}</span>
+    </div>
+  )
+}
 
 function MoveForm({ bucket, data, direction, onDone }: { bucket: SavingsBucket; data: MoneyData; direction: 1 | -1; onDone: () => void }) {
   const [amount, setAmount] = useState('')
@@ -92,7 +119,7 @@ function MoveForm({ bucket, data, direction, onDone }: { bucket: SavingsBucket; 
         {!liquid
           ? 'Este apartado está en una cuenta de ahorro, así que no cambia tu Disponible real.'
           : adding
-            ? 'Apartar no mueve dinero de tu banco. Lo reserva para este fin.'
+            ? 'Apartar no mueve dinero de tu banco. Lo reserva para este fin. Si guardas este dinero en otra cuenta, cámbialo en Editar → Dónde está.'
             : split && split.fromOpening > 0 && split.fromReserved === 0
               ? 'Este dinero no está en tus cuentas. Retirarlo no cambia tu Disponible real.'
               : split && split.fromOpening > 0
@@ -128,7 +155,7 @@ function BucketForm({
   const options = [
     { value: '', label: 'Banco o efectivo' },
     ...selectable(data.accounts, [bucket?.account_id])
-      .filter((a) => a.type === 'savings')
+      .filter((a) => !isLiquid(a))
       .map((a) => ({ value: a.uuid, label: `${a.name} · ${ACCOUNT_TYPE_LABEL[a.type]}` })),
   ]
   const balance = bucket ? bucketBalance(bucket, data.bucketMoves) : 0
@@ -181,6 +208,9 @@ function BucketForm({
           <span className="dim">Cambio en Disponible real</span>
           <span className="mono">{`${impact > 0 ? '+' : ''}${money(impact)}`}</span>
         </div>
+      )}
+      {balance > 0 && accountId && accountId !== (bucket?.account_id ?? '') && (
+        <FieldNote>{`Cambiar dónde está no transfiere dinero. Si estos ${money(balance)} ya están en esa cuenta, revisa su saldo en Cuentas.`}</FieldNote>
       )}
       <FieldNote>
         {options.length === 1
@@ -249,6 +279,188 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
       </FieldNote>
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel="Mover" saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function FijarInAccountForm({ bucket, home, data, onDone }: { bucket: SavingsBucket; home: Account; data: MoneyData; onDone: () => void }) {
+  const balance = bucketBalance(bucket, data.bucketMoves)
+  const unassigned = unassignedIn(home, data.buckets, data.bucketMoves)
+  const [total, setTotal] = useState(String(balance))
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const value = parseAmount(total)
+  const gap = value === null ? 0 : roundMoney(value - balance)
+  const { fromUnassigned, added } = fijarInAccountSplit(gap, unassigned)
+  const unassignedAfter = roundMoney(unassigned - fromUnassigned - Math.min(0, gap))
+  const available = moneySnapshot(data, new Date()).breakdown.total
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (value === null || value < 0) return setError('Escribe cuánto hay hoy en este apartado.')
+    setSaving(true)
+    try {
+      await fijarSaldoInAccount(bucket, home, gap, unassigned)
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <AmountField label="¿Cuánto hay hoy en este apartado? (MXN)" value={total} onChange={(v) => { setTotal(v); setError(null) }} invalid={error !== null} autoFocus />
+      <div className="stat-list">
+        <Change label={bucket.name} before={balance} after={value === null ? balance : value} />
+        <Change label={home.name} before={home.current_balance} after={roundMoney(home.current_balance + added)} />
+        <Change label={`Sin apartar en ${home.name}`} before={unassigned} after={unassignedAfter} />
+        <Change label="Disponible real" before={available} after={available} total />
+      </div>
+      <FieldNote>
+        {gap < 0
+          ? `Los ${money(-gap)} que bajas se quedan en ${home.name}, sin apartar. Si ${home.name} tiene menos, actualiza su saldo en Cuentas.`
+          : fromUnassigned > 0 && added > 0
+            ? `Se toman ${money(fromUnassigned)} que ya estaban en ${home.name} sin apartar, y ${home.name} sube ${money(added)} con un ajuste. Tus otras cuentas y tu Disponible real no cambian.`
+            : fromUnassigned > 0
+              ? `Estos pesos ya estaban en ${home.name} sin apartar. ${home.name} no cambia, ni tu Disponible real.`
+              : `${home.name} sube lo mismo que el apartado, con un ajuste. Tus otras cuentas y tu Disponible real no cambian.`}
+      </FieldNote>
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Fijar saldo" saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function DepositForm({ bucket, home, data, onDone }: { bucket: SavingsBucket; home: Account; data: MoneyData; onDone: () => void }) {
+  const [amount, setAmount] = useState('')
+  const [fromId, setFromId] = useState<string | null>(null)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const unassigned = unassignedIn(home, data.buckets, data.bucketMoves)
+  const options = [
+    ...selectable(data.accounts)
+      .filter((a) => a.uuid !== home.uuid)
+      .map((a) => ({ value: a.uuid, label: `${a.name} · ${ACCOUNT_TYPE_LABEL[a.type]} · ${money(a.current_balance)}` })),
+    { value: home.uuid, label: `Ya está en ${home.name} · ${money(Math.max(0, unassigned))} sin apartar` },
+  ]
+  const activeFrom = pickValid(fromId, options)
+  const from = data.accounts.find((a) => a.uuid === activeFrom)
+  const inPlace = from?.uuid === home.uuid
+  const value = parseAmount(amount)
+  const moved = value ?? 0
+  const balance = bucketBalance(bucket, data.bucketMoves)
+  const available = moneySnapshot(data, new Date()).breakdown.total
+  const leavesLiquid = Boolean(from && !inPlace && isLiquid(from))
+  const shown = value === null ? 'Se transfiere el monto' : `Se transfieren ${money(value)}`
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!from) return setError('Elige de dónde sale el dinero.')
+    if (value === null || value <= 0) return setError('Escribe un monto mayor a cero.')
+    if (inPlace && value > unassigned) return setError(`En ${home.name} hay ${money(Math.max(0, unassigned))} sin apartar.`)
+    setSaving(true)
+    try {
+      if (inPlace) await assignUnassigned(bucket, home, value)
+      else await depositToBucket({ bucket, from, to: home, amount: value, reason: reason.trim() || `Desde ${from.name}` })
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <AmountField label="Depositar (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
+      {activeFrom && <SelectField label="Desde" value={activeFrom} onChange={(v) => { setFromId(v); setError(null) }} options={options} />}
+      <div className="readout">
+        <span className="dim">Hacia</span>
+        <span>{home.name}</span>
+      </div>
+      {!inPlace && <TextField label="Nota" value={reason} onChange={setReason} placeholder="Opcional" />}
+      <div className="stat-list">
+        {from && !inPlace && <Change label={from.name} before={from.current_balance} after={roundMoney(from.current_balance - moved)} />}
+        {!inPlace && <Change label={home.name} before={home.current_balance} after={roundMoney(home.current_balance + moved)} />}
+        {inPlace && <Change label={`Sin apartar en ${home.name}`} before={unassigned} after={roundMoney(unassigned - moved)} />}
+        <Change label={bucket.name} before={balance} after={roundMoney(balance + moved)} />
+        <Change label="Disponible real" before={available} after={leavesLiquid ? roundMoney(available - moved) : available} total />
+      </div>
+      <FieldNote>
+        {inPlace
+          ? `No se mueve dinero entre cuentas. Estos pesos ya están en ${home.name}; solo quedan apartados para ${bucket.name}.`
+          : `${shown} de ${from?.name ?? 'la cuenta'} a ${home.name}, para ${bucket.name}. ${leavesLiquid ? 'Tu Disponible real baja esa cantidad.' : 'Tu Disponible real no cambia.'}`}
+      </FieldNote>
+      {from && !inPlace && value !== null && value > from.current_balance && (
+        <FieldNote>{`${from.name} tiene ${money(from.current_balance)}. Si su saldo no coincide, ajústalo en Cuentas.`}</FieldNote>
+      )}
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Depositar" saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function ReleaseForm({ bucket, home, data, onDone }: { bucket: SavingsBucket; home: Account; data: MoneyData; onDone: () => void }) {
+  const [amount, setAmount] = useState('')
+  const [toId, setToId] = useState<string | null>(null)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const options = [
+    ...selectable(data.accounts)
+      .filter((a) => a.uuid !== home.uuid && isLiquid(a))
+      .map((a) => ({ value: a.uuid, label: `Traer a ${a.name} · ${money(a.current_balance)}` })),
+    { value: home.uuid, label: `Se queda en ${home.name}, sin apartar` },
+  ]
+  const activeTo = pickValid(toId, options)
+  const to = data.accounts.find((a) => a.uuid === activeTo)
+  const stays = to?.uuid === home.uuid
+  const value = parseAmount(amount)
+  const moved = value ?? 0
+  const balance = bucketBalance(bucket, data.bucketMoves)
+  const reserved = reservedBalance(bucket, data.bucketMoves)
+  const unassigned = unassignedIn(home, data.buckets, data.bucketMoves)
+  const available = moneySnapshot(data, new Date()).breakdown.total
+  const shown = value === null ? 'Se transfiere el monto' : `Se transfieren ${money(value)}`
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!to) return setError('Elige a dónde va el dinero.')
+    if (value === null || value <= 0) return setError('Escribe un monto mayor a cero.')
+    if (value > balance) return setError(`El apartado tiene ${money(balance)}.`)
+    if (!reason.trim()) return setError('Escribe para qué lo usas. Queda en el historial.')
+    if (!stays && value > home.current_balance) return setError(`En ${home.name} hay ${money(home.current_balance)}. Si no coincide, actualiza su saldo en Cuentas.`)
+    setSaving(true)
+    try {
+      if (stays) await withdrawFromBucket(bucket, { ...withdrawSplit(reserved, value), reason: reason.trim() })
+      else await fundFromBucket({ bucket, from: home, to, amount: value, reason: reason.trim() })
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <AmountField label="Retirar (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
+      {activeTo && <SelectField label="A dónde va" value={activeTo} onChange={(v) => { setToId(v); setError(null) }} options={options} />}
+      <TextField label="Motivo" value={reason} onChange={setReason} placeholder="Ej. Vuelo a Oaxaca" />
+      <div className="stat-list">
+        <Change label={bucket.name} before={balance} after={roundMoney(balance - moved)} />
+        {stays && <Change label={`Sin apartar en ${home.name}`} before={unassigned} after={roundMoney(unassigned + moved)} />}
+        {to && !stays && <Change label={home.name} before={home.current_balance} after={roundMoney(home.current_balance - moved)} />}
+        {to && !stays && <Change label={to.name} before={to.current_balance} after={roundMoney(to.current_balance + moved)} />}
+        <Change label="Disponible real" before={available} after={stays ? available : roundMoney(available + moved)} total />
+      </div>
+      <FieldNote>
+        {stays
+          ? `El dinero sigue en ${home.name}, sin apartar. Tu Disponible real no cambia.`
+          : `${shown} de ${home.name} a ${to?.name ?? 'la cuenta'}. Tu Disponible real sube esa cantidad.`}
+      </FieldNote>
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Retirar" saving={saving} onCancel={onDone} />
     </form>
   )
 }
@@ -353,6 +565,8 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
   const history = bucketHistory(bucket, data.bucketMoves)
   const reversed = new Set(data.bucketMoves.flatMap((move) => (move.reverses_id ? [move.reverses_id] : [])))
   const account = data.accounts.find((a) => a.uuid === bucket.account_id)
+  const home = homeAccount(bucket, data.accounts)
+  const homeUnassigned = home ? unassignedIn(home, data.buckets, data.bucketMoves) : 0
   const pace = targetPace(bucket, balance, data.recurring, new Date())
   const cycleSetAside = setAsideThisCycle(bucket, data.bucketMoves, data.recurring, new Date())
   const required = cycleSetAside.required
@@ -454,6 +668,12 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
           <span className="dim">Dónde está</span>
           <span>{account ? account.name : 'Banco o efectivo'}</span>
         </div>
+        {home && homeUnassigned !== 0 && (
+          <div className="readout">
+            <span className="dim">{homeUnassigned > 0 ? `Sin apartar en ${home.name}` : `Tus apartados pasan el saldo de ${home.name}`}</span>
+            <span className={`mono${homeUnassigned < 0 ? ' text-amber' : ''}`}>{money(Math.abs(homeUnassigned))}</span>
+          </div>
+        )}
         {bucket.income_share && (
           <div className="readout">
             <span className="dim">Con cada ingreso · {SHARE_OPTIONS.find((o) => o.value === bucket.income_share?.income)?.label}</span>
@@ -462,17 +682,17 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
         )}
       </div>
 
-      {mode === 'add' && <MoveForm bucket={bucket} data={data} direction={1} onDone={done} />}
-      {mode === 'withdraw' && <MoveForm bucket={bucket} data={data} direction={-1} onDone={done} />}
+      {mode === 'add' && (home ? <DepositForm bucket={bucket} home={home} data={data} onDone={done} /> : <MoveForm bucket={bucket} data={data} direction={1} onDone={done} />)}
+      {mode === 'withdraw' && (home ? <ReleaseForm bucket={bucket} home={home} data={data} onDone={done} /> : <MoveForm bucket={bucket} data={data} direction={-1} onDone={done} />)}
       {mode === 'transfer' && <TransferForm bucket={bucket} data={data} onDone={done} />}
       {mode === 'setup' && <BucketForm bucket={bucket} data={data} onDone={done} />}
-      {mode === 'fijar' && <FijarForm bucket={bucket} data={data} onDone={done} />}
+      {mode === 'fijar' && (home ? <FijarInAccountForm bucket={bucket} home={home} data={data} onDone={done} /> : <FijarForm bucket={bucket} data={data} onDone={done} />)}
       {mode === 'recognize' && <RecognizeForm bucket={bucket} data={data} onDone={done} />}
       {mode === 'view' && (
         <div className="verb-row">
           <button type="button" className="verb-button verb-primary" onClick={() => setMode('add')}>
             <span className="key-glyph">A</span>
-            Apartar
+            {home ? 'Depositar' : 'Apartar'}
           </button>
           {balance > 0 && (
             <button type="button" className="verb-button" onClick={() => setMode('withdraw')}>
@@ -507,6 +727,9 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
             </button>
           )}
         </div>
+      )}
+      {mode === 'view' && home && homeUnassigned < 0 && (
+        <FieldNote>{`Tus apartados en ${home.name} suman ${money(-homeUnassigned)} más que su saldo. Ajústalo en Cuentas → ${home.name}.`}</FieldNote>
       )}
       {mode === 'view' && custom && balance !== 0 && <FieldNote>Para archivarlo, retira o mueve su saldo primero.</FieldNote>}
       {error && <FieldError>{error}</FieldError>}

@@ -207,8 +207,10 @@ function TransactionList({
         {confirming
           ? selectedTx?.loan_extra_id
             ? 'Eliminar revierte el saldo y regresa el calendario anterior del préstamo.'
-            : selectedTx?.bucket_id
-              ? 'Eliminar revierte la transferencia y regresa el dinero al apartado.'
+            : selectedTx?.bucket_id || data.bucketMoves.some((move) => move.tx_id === selectedTx?.uuid)
+              ? selectedTx?.type === 'adjustment'
+                ? 'Eliminar revierte el ajuste y lo que se repartió en tus apartados.'
+                : 'Eliminar revierte la transferencia y los movimientos de su apartado.'
               : 'Eliminar revierte el saldo de la cuenta o tarjeta.'
           : rows.length === 0
             ? EMPTY_LIST

@@ -3,7 +3,7 @@ import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel, Rail, StatBar } from '../components/hud'
 import { OpeningBalancePanel } from '../components/OpeningBalancePanel'
 import { StageHeader } from '../components/StageHeader'
-import { findOpeningAccount } from '../db/accounts'
+import { findOpeningAccount, isLiquid } from '../db/accounts'
 import { FieldError } from '../components/fields'
 import { updateSettings } from '../db/buckets'
 import type { Account } from '../db/types'
@@ -144,7 +144,11 @@ export function Inicio({
     ...(breakdown.unassigned !== 0 ? [{ id: 'unassigned', label: 'Sin origen', value: money(breakdown.unassigned) }] : []),
     { id: 'card', label: 'TDC', value: cards.length > 0 ? money(cardDebt) : '—' },
     { id: 'loans', label: 'Préstamos', value: borrowed.length > 0 ? money(loanDebt) : '—' },
-    { id: 'savings', label: 'Ahorro', value: accounts.some((a) => a.type === 'savings') ? money(sumType(accounts, 'savings')) : '—' },
+    {
+      id: 'savings',
+      label: 'Ahorro',
+      value: accounts.some((a) => !isLiquid(a)) ? money(accounts.filter((a) => !isLiquid(a)).reduce((sum, a) => sum + a.current_balance, 0)) : '—',
+    },
   ]
 
   return (

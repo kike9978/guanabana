@@ -1,6 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 import type { Account, BucketMove, RecurringItem, SavingsBucket } from '../db/types'
-import { bucketBalance, bucketHistory, bucketsInLiquid, fijarGap, incomeEventsUntil, isHeldInLiquid, openingBalance, reservedBalance, setAsideThisCycle, targetPace, withdrawSplit } from './buckets'
+import {
+  bucketBalance,
+  bucketHistory,
+  bucketsInAccount,
+  bucketsInLiquid,
+  fijarGap,
+  fijarInAccountSplit,
+  homeAccount,
+  incomeEventsUntil,
+  isHeldInLiquid,
+  openingBalance,
+  proportionalSplit,
+  reservedBalance,
+  setAsideThisCycle,
+  targetPace,
+  unassignedIn,
+  withdrawSplit,
+} from './buckets'
 import { computeRealAvailable } from './realAvailable'
 
 const stamp = '2026-09-01T00:00:00.000Z'
@@ -81,6 +98,52 @@ describe('buckets', () => {
 
   test('history is newest first', () => {
     expect(bucketHistory(emergency, moves).map((m) => m.amount)).toEqual([-500, 3000])
+  })
+})
+
+describe('apartados in a savings account', () => {
+  const gbm = account('gbm', 'savings', 5000)
+  const trips = bucket('trips', 'travel', gbm.uuid)
+  const car = bucket('car', 'custom', gbm.uuid)
+  const old = { ...bucket('old', 'custom', gbm.uuid), archived: true }
+  const inBank = bucket('inBank', 'custom', bank.uuid)
+
+  test('the home account is the savings account, never bank or cash', () => {
+    expect(homeAccount(trips, [bank, gbm])?.uuid).toBe('gbm')
+    expect(homeAccount(inBank, [bank, gbm])).toBeUndefined()
+    expect(homeAccount(bucket('x', 'custom'), [bank, gbm])).toBeUndefined()
+  })
+
+  test('sin apartar is the account balance minus its active apartados', () => {
+    const moves = [move('trips', 3000, '2026-09-01'), move('car', 1500, '2026-09-02'), move('old', 900, '2026-09-03')]
+    expect(bucketsInAccount(gbm.uuid, [trips, car, old, inBank], moves).map((row) => row.balance)).toEqual([3000, 1500])
+    expect(unassignedIn(gbm, [trips, car, old], moves)).toBe(500)
+    expect(unassignedIn({ ...gbm, current_balance: 0 }, [trips], [move('trips', 5000, '2026-09-01')])).toBe(-5000)
+  })
+
+  test('a deposit from the bank lowers Real Available once', () => {
+    const before = computeRealAvailable({ accounts: [bank, { ...gbm, current_balance: 0 }], cards: [], buffer: 0, bucketsInLiquid: 0 }).total
+    const accounts = [{ ...bank, current_balance: 18000 }, { ...gbm, current_balance: 2000 }]
+    const held = bucketsInLiquid([trips], [move('trips', 2000, '2026-09-01')], accounts)
+    const after = computeRealAvailable({ accounts, cards: [], buffer: 0, bucketsInLiquid: held }).total
+    expect(held).toBe(0)
+    expect(before - after).toBe(2000)
+  })
+
+  test('fijar claims unassigned pesos before raising the account', () => {
+    expect(fijarInAccountSplit(5000, 0)).toEqual({ fromUnassigned: 0, added: 5000 })
+    expect(fijarInAccountSplit(5000, 1200)).toEqual({ fromUnassigned: 1200, added: 3800 })
+    expect(fijarInAccountSplit(500, 1200)).toEqual({ fromUnassigned: 500, added: 0 })
+    expect(fijarInAccountSplit(5000, -300)).toEqual({ fromUnassigned: 0, added: 5000 })
+    expect(fijarInAccountSplit(-400, 1200)).toEqual({ fromUnassigned: 0, added: 0 })
+  })
+
+  test('interest splits by balance in cents and the remainder lands on the largest apartado', () => {
+    expect(proportionalSplit(120, [{ id: 'trips', weight: 3000 }, { id: 'car', weight: 1500 }])).toEqual({ trips: 80, car: 40 })
+    expect(proportionalSplit(100, [{ id: 'a', weight: 1 }, { id: 'b', weight: 1 }, { id: 'c', weight: 1 }])).toEqual({ a: 33.34, b: 33.33, c: 33.33 })
+    expect(proportionalSplit(-90, [{ id: 'a', weight: 2000 }, { id: 'b', weight: 1000 }])).toEqual({ a: -60, b: -30 })
+    expect(proportionalSplit(50, [{ id: 'a', weight: 0 }, { id: 'b', weight: 400 }])).toEqual({ a: 0, b: 50 })
+    expect(proportionalSplit(50, [{ id: 'a', weight: 0 }])).toEqual({ a: 0 })
   })
 })
 

@@ -1,4 +1,6 @@
+import { fijarInAccountSplit } from '../lib/buckets'
 import { todayIso } from '../lib/dates'
+import { roundMoney } from '../lib/money'
 import { reconcileBalance } from './accounts'
 import { newRecord, putMany, writeAcross } from './db'
 import { draftTransaction, recordWithBucketMoves } from './ledger'
@@ -46,27 +48,82 @@ export async function transferBetweenBuckets(from: SavingsBucket, to: SavingsBuc
   await putMany('bucket_moves', [move(from, -amount), move(to, amount)])
 }
 
-export async function fundFromBucket(fields: { bucket: SavingsBucket; from: Account; to: Account; amount: number; reason: string }): Promise<void> {
-  const date = todayIso()
+const linkedMove = (bucket: SavingsBucket, amount: number, reason: string, txId: string, date: string) =>
+  newRecord<BucketMove>({ bucket_id: bucket.uuid, amount, reason, source: 'manual', date, income_tx_id: null, tx_id: txId })
+
+/** One account transfer and the apartado moves it carries, in one write. Deleting the transfer reverses the moves. */
+export async function transferWithBuckets(fields: {
+  from: Account
+  to: Account
+  amount: number
+  date?: string
+  notes: string
+  reason: string
+  fromBucket?: SavingsBucket | null
+  toBucket?: SavingsBucket | null
+}): Promise<void> {
+  const date = fields.date ?? todayIso()
   const transfer = draftTransaction({
     type: 'transfer',
     amount: fields.amount,
     date,
     account_id: fields.from.uuid,
     to_account_id: fields.to.uuid,
-    bucket_id: fields.bucket.uuid,
-    notes: `Desde el apartado ${fields.bucket.name}`,
+    bucket_id: (fields.toBucket ?? fields.fromBucket)?.uuid ?? null,
+    notes: fields.notes,
   })
-  const move = newRecord<BucketMove>({
-    bucket_id: fields.bucket.uuid,
-    amount: -fields.amount,
-    reason: fields.reason,
-    source: 'manual',
-    date,
-    income_tx_id: null,
-    tx_id: transfer.uuid,
-  })
-  await recordWithBucketMoves(transfer, [move])
+  const moves = [
+    fields.fromBucket ? linkedMove(fields.fromBucket, -fields.amount, fields.reason, transfer.uuid, date) : null,
+    fields.toBucket ? linkedMove(fields.toBucket, fields.amount, fields.reason, transfer.uuid, date) : null,
+  ].filter((move) => move !== null)
+  await recordWithBucketMoves(transfer, moves)
+}
+
+export function fundFromBucket(fields: { bucket: SavingsBucket; from: Account; to: Account; amount: number; reason: string }): Promise<void> {
+  return transferWithBuckets({ ...fields, notes: `Desde el apartado ${fields.bucket.name}`, fromBucket: fields.bucket })
+}
+
+export function depositToBucket(fields: { bucket: SavingsBucket; from: Account; to: Account; amount: number; reason: string }): Promise<void> {
+  return transferWithBuckets({ ...fields, notes: `Al apartado ${fields.bucket.name}`, toBucket: fields.bucket })
+}
+
+/** Pesos already in the apartado's account, not yet claimed by any apartado. No account moves. */
+export function assignUnassigned(bucket: SavingsBucket, account: Account, amount: number): Promise<void> {
+  return moveToBucket(bucket, { amount, reason: `Ya estaba en ${account.name}` })
+}
+
+/**
+ * Fijar saldo for an apartado in a savings account. A higher total claims unassigned pesos first, then raises the
+ * account by the rest with one adjustment. A lower total leaves the difference in the account, unassigned.
+ */
+export async function fijarSaldoInAccount(bucket: SavingsBucket, account: Account, gap: number, unassigned: number): Promise<void> {
+  if (gap === 0) return
+  if (gap < 0) return moveToBucket(bucket, { amount: gap, reason: 'Ajuste del saldo fijado' })
+  const { fromUnassigned, added } = fijarInAccountSplit(gap, unassigned)
+  const date = todayIso()
+  const claimed = fromUnassigned > 0
+    ? newRecord<BucketMove>({ bucket_id: bucket.uuid, amount: fromUnassigned, reason: `Ya estaba en ${account.name}`, source: 'manual', date, income_tx_id: null })
+    : null
+  if (added === 0) return putMany('bucket_moves', [claimed!])
+  const adjustment = draftTransaction({ type: 'adjustment', amount: added, date, account_id: account.uuid, bucket_id: bucket.uuid, notes: `Saldo inicial · ${bucket.name}` })
+  const moves = [linkedMove(bucket, added, 'Saldo inicial', adjustment.uuid, date), claimed].filter((move) => move !== null)
+  await recordWithBucketMoves(adjustment, moves)
+}
+
+export interface BucketSplit {
+  bucket: SavingsBucket
+  amount: number
+}
+
+/** Actualizar saldo on a savings account: one adjustment, and the part of the gap each apartado takes. */
+export async function updateSavingsBalance(account: Account, actual: number, splits: BucketSplit[]): Promise<void> {
+  const gap = roundMoney(actual - account.current_balance)
+  if (gap === 0) return
+  const date = todayIso()
+  const reason = gap > 0 ? 'Rendimientos' : 'Ajuste de saldo'
+  const adjustment = draftTransaction({ type: 'adjustment', amount: gap, date, account_id: account.uuid, notes: reason })
+  const moves = splits.filter((split) => split.amount !== 0).map((split) => linkedMove(split.bucket, split.amount, reason, adjustment.uuid, date))
+  await recordWithBucketMoves(adjustment, moves)
 }
 
 export async function fijarSaldo(bucket: SavingsBucket, gap: number): Promise<void> {
