@@ -85,6 +85,7 @@ describe('projection', () => {
       tx('2026-09-20', -500),
       tx('2026-09-25', 8000, { recurring_id: 'rent' }),
       tx('2026-09-26', 3000, { loan_installment_id: 'car-1' }),
+      tx('2026-09-27', 4000, { loan_id: 'lent-to-sis' }),
     ]
     expect(habitualDailySpend(history, today)).toEqual({ perDay: roundMoney(2500 / 60), days: 60 })
     expect(habitualDailySpend([tx('2026-09-27', 700)], today)).toEqual({ perDay: 100, days: 7 })
@@ -103,6 +104,48 @@ describe('projection', () => {
     expect(result.after).toBe(-3000)
     expect(result.lowest.date).toEqual(today)
     expect(result.checkpoints[1].available).toBe(9000)
+  })
+
+  test('an adjusted income projects its own amount and scales with the scenario', () => {
+    const aguinaldo = { ...base, uuid: 'o', recurring_id: 'q2', occurrence: '2026-09-30', amount: 30000 }
+    const adjusted = data({ overrides: [aguinaldo] })
+    expect(projectedAvailable(adjusted, today, today)).toBe(9000)
+    expect(projectedAvailable(adjusted, today, on(9, 30))).toBe(10000 + 30000 - 8000 - 1000)
+    expect(projectedAvailable(adjusted, today, on(9, 30), { incomeFactor: 0.9 })).toBe(10000 + 27000 - 8000 - 1000)
+  })
+
+  test('an income adjusted to 0 projects nothing and keeps the income days', () => {
+    const skipped = data({ overrides: [{ ...base, uuid: 'o', recurring_id: 'q2', occurrence: '2026-09-30', amount: 0 }] })
+    expect(projectedAvailable(skipped, today, on(9, 30))).toBe(10000 - 8000 - 1000)
+    expect(projectedAvailable(skipped, today, on(10, 15))).toBe(10000 + 20000 - 8000 - 1000)
+  })
+
+  test('a generated invoice lowers Disponible real until its due date, without paying it twice', () => {
+    const invoice: RecurringItem = {
+      ...item('isr', 'bill', 17, 4000),
+      frequency: 'once',
+      issued_on: '2026-09-29',
+      start_date: '2026-11-17',
+    }
+    const withInvoice = data({ recurring: [...data().recurring, invoice] })
+    expect(moneySnapshot(withInvoice, today).breakdown.invoicesOutstanding).toBe(4000)
+    expect(moneySnapshot(withInvoice, today).breakdown.total).toBe(5000)
+    expect(projectedAvailable(withInvoice, today, on(9, 30))).toBe(17000)
+    const beforeDue = projectedAvailable(withInvoice, today, on(11, 16))
+    expect(projectedAvailable(withInvoice, today, on(11, 17))).toBe(beforeDue)
+  })
+
+  test('an invoice generated later does not reserve today', () => {
+    const invoice: RecurringItem = {
+      ...item('isr', 'bill', 17, 4000),
+      frequency: 'once',
+      issued_on: '2026-11-01',
+      start_date: '2026-11-17',
+    }
+    const later = data({ recurring: [...data().recurring, invoice] })
+    expect(moneySnapshot(later, today).breakdown.total).toBe(9000)
+    expect(projectedAvailable(later, today, on(10, 31))).toBe(projectedAvailable(data(), today, on(10, 31)))
+    expect(projectedAvailable(later, today, on(11, 1))).toBe(projectedAvailable(data(), today, on(11, 1)) - 4000)
   })
 
   test('paid events are not counted twice', () => {

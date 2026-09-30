@@ -4,6 +4,7 @@ import { FALLBACK_CYCLE_DAYS, incomeCycle } from './cycle'
 import { dateToIso, isoToDate } from './dates'
 import { formatDate } from './format'
 import { limitFor, monthKey } from './budgets'
+import { isSpending } from './ledger'
 import { roundMoney } from './money'
 
 export type StatsWindow = 'cycle' | 'month' | 'quarter' | 'year'
@@ -107,9 +108,9 @@ export function inRange(tx: Pick<Transaction, 'date'>, window: Range): boolean {
   return tx.date >= window.from && tx.date < window.to
 }
 
-/** Spending is `expense` rows only; a refund is a negative expense and lowers the total. */
+/** Spending is `expense` rows only, without money lent; a refund is a negative expense and lowers the total. */
 export function expensesIn(transactions: Transaction[], window: Range): Transaction[] {
-  return transactions.filter((tx) => tx.type === 'expense' && inRange(tx, window))
+  return transactions.filter((tx) => isSpending(tx) && inRange(tx, window))
 }
 
 export function sumAmounts(transactions: Transaction[]): number {

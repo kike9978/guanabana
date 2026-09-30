@@ -80,6 +80,13 @@ describe('expense stats', () => {
     expect(stats.series[0]).toMatchObject({ amount: 1000, previous: 800 })
   })
 
+  test('money handed over as a loan is not spending', () => {
+    const lent = tx('2026-09-15', 3000, { category_id: 'lent', loan_id: 'l' })
+    const withLoan = expenseStats({ transactions: [...transactions, lent], categories, accounts, budgets }, windowRanges('month', paydays, today), 'uncategorized')
+    expect(withLoan.total).toBe(1550)
+    expect(withLoan.byMethod.map((m) => m.amount)).toEqual([850, 300, 400])
+  })
+
   test('a budget over part of a month is prorated by days', () => {
     expect(budgetForWindow(budgets, 'fun', { from: '2026-09-15', to: '2026-09-30' })).toBe(150)
     expect(budgetForWindow(budgets, 'food', { from: '2026-09-01', to: '2026-10-01' })).toBeNull()

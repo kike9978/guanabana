@@ -17,6 +17,8 @@ export const STORES = [
   'budgets',
   'settings',
   'projection_scenarios',
+  'plan_items',
+  'planned_contributions',
   'ai_jobs',
   'share_events',
 ] as const
@@ -24,7 +26,7 @@ export const STORES = [
 export type StoreName = (typeof STORES)[number]
 
 const DB_NAME = 'guanabana'
-const DB_VERSION = 4
+const DB_VERSION = 5
 
 let dbPromise: Promise<IDBDatabase> | null = null
 

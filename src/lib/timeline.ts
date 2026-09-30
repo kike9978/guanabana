@@ -3,6 +3,7 @@ import type { RecurringItem, RecurringOverride } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { itemOccurrences, overrideIndex } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
+import { formatMoney } from './format'
 import { paidInstallmentIds } from './loans'
 import { nextPayments } from './statement'
 import { cardEvents } from './upcoming'
@@ -17,8 +18,8 @@ export interface TimelineEvent {
   kind: TimelineKind
   paid: boolean
   action?: { type: AddType; prefill: AddPrefill }
-  /** Bills only: the item behind the event, so one occurrence can be adjusted. */
-  bill?: { item: RecurringItem; occurrence: string; override?: RecurringOverride }
+  /** Bills and income: the item behind the event, so one occurrence can be adjusted. */
+  recurring?: { item: RecurringItem; occurrence: string; override?: RecurringOverride }
 }
 
 export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[] {
@@ -38,7 +39,7 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
       const occurrence = dateToIso(date)
       if (occurrence < item.start_date) continue
       const isBill = item.type === 'bill'
-      const override = isBill ? adjusted.get(`${item.uuid}|${occurrence}`) : undefined
+      const override = adjusted.get(`${item.uuid}|${occurrence}`)
       const amount = override?.amount ?? item.amount
       events.push({
         key: `${item.uuid}-${occurrence}`,
@@ -47,7 +48,7 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
         amount,
         kind: isBill ? 'bill' : 'income',
         paid: recordedOccurrences.has(`${item.uuid}|${occurrence}`),
-        ...(isBill ? { bill: { item, occurrence, override } } : {}),
+        recurring: { item, occurrence, override },
         action: {
           type: isBill ? 'expense' : 'income',
           prefill: {
@@ -98,6 +99,23 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
   }
 
   return events.sort((a, b) => a.date.getTime() - b.date.getTime())
+}
+
+/** Adjusted amounts can only be set on a bill or income that is still ahead and unregistered. */
+export function canAdjust(event: TimelineEvent, today: Date): boolean {
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  return event.recurring !== undefined && !event.paid && event.date >= start
+}
+
+export function adjustLabel(event: TimelineEvent): string {
+  return event.kind === 'income' ? 'Ajustar este ingreso' : 'Ajustar este pago'
+}
+
+export function adjustedNote(event: TimelineEvent): string | null {
+  if (!event.recurring?.override) return null
+  if (event.amount === 0) return event.kind === 'income' ? 'Sin ingreso este periodo' : 'Sin cargo este periodo'
+  const usual = event.recurring.item.amount
+  return `normalmente ${usual === null ? '—' : formatMoney(usual, 'MXN')}`
 }
 
 export function groupByDay(events: TimelineEvent[]): Map<number, TimelineEvent[]> {

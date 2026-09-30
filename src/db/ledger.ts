@@ -2,17 +2,19 @@ import { balanceEffects } from '../lib/ledger'
 import { todayIso } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { complete, newRecord, notifyChange, openDb, settle, type StoreName } from './db'
-import type { Account, BucketMove, CreditCard, Item, LoanInstallment, Place, Transaction, TransactionLine } from './types'
+import type { Account, BucketMove, CreditCard, Item, Loan, LoanInstallment, Place, PlanItem, Transaction, TransactionLine } from './types'
 
 const LEDGER_STORES: StoreName[] = [
   'transactions',
   'accounts',
   'credit_cards',
+  'loans',
   'loan_installments',
   'bucket_moves',
   'transaction_lines',
   'items',
   'places',
+  'plan_items',
 ]
 
 export class LedgerBlockedError extends Error {}
@@ -29,8 +31,11 @@ interface LedgerChange {
   put?: Transaction
   putMany?: Transaction[]
   installments?: LoanInstallment[]
+  loan?: Loan
+  dropLoan?: { loanId: string; installmentIds: string[] }
   bucketMoves?: BucketMove[]
   lines?: LineWrite
+  planItems?: PlanItem[]
 }
 
 /** Replaces a transaction's lines, and drops items left with no line so price history keeps no ghost rows. */
@@ -61,7 +66,7 @@ async function reverseLinkedMoves(tx: IDBTransaction, record: Transaction): Prom
       newRecord<BucketMove>({
         bucket_id: move.bucket_id,
         amount: -move.amount,
-        reason: 'Se eliminó la transferencia',
+        reason: record.type === 'transfer' ? 'Se eliminó la transferencia' : 'Se eliminó el movimiento',
         source: move.source,
         date,
         income_tx_id: null,
@@ -129,8 +134,14 @@ async function applyLedger(change: LedgerChange): Promise<void> {
     if (change.remove && change.remove.uuid !== change.put?.uuid) transactions.delete(change.remove.uuid)
     if (change.put) transactions.put(change.put)
     for (const record of change.putMany ?? []) transactions.put(record)
+    if (change.loan) tx.objectStore('loans').put(change.loan)
     for (const row of change.installments ?? []) tx.objectStore('loan_installments').put(row)
+    if (change.dropLoan) {
+      tx.objectStore('loans').delete(change.dropLoan.loanId)
+      for (const uuid of change.dropLoan.installmentIds) tx.objectStore('loan_installments').delete(uuid)
+    }
     for (const move of change.bucketMoves ?? []) tx.objectStore('bucket_moves').put(move)
+    for (const item of change.planItems ?? []) tx.objectStore('plan_items').put(item)
     await writeLines(tx, change)
   } catch (error) {
     tx.abort()
@@ -195,6 +206,21 @@ export function recordWithInstallments(record: Transaction, installments: LoanIn
   return applyLedger({ put: record, installments })
 }
 
+/** A new loan and its schedule; for lent money, also the expense that hands it over. */
+export function recordLoan(loan: Loan, installments: LoanInstallment[], disbursement?: Transaction): Promise<void> {
+  return applyLedger({ loan, installments, put: disbursement })
+}
+
+/** Deletes a loan and its schedule. With `disbursement`, that expense goes too and its balance comes back. */
+export function removeLoan(loan: Loan, installmentIds: string[], disbursement?: Transaction): Promise<void> {
+  return applyLedger({ dropLoan: { loanId: loan.uuid, installmentIds }, remove: disbursement })
+}
+
 export function recordWithBucketMoves(record: Transaction, bucketMoves: BucketMove[]): Promise<void> {
   return applyLedger({ put: record, bucketMoves })
+}
+
+/** A wish bought: its expense, any transfers out of Ahorro apartados, the draws, and the wish's link, in one write. */
+export function recordPlanPurchase(records: Transaction[], bucketMoves: BucketMove[], item: PlanItem): Promise<void> {
+  return applyLedger({ putMany: records, bucketMoves, planItems: [item] })
 }

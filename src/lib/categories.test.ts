@@ -5,6 +5,7 @@ import {
   canHaveChildren,
   categoryLabel,
   categoryOptions,
+  DISBURSEMENT_KEY,
   matchesCategory,
   moveImpact,
   subcategoryNameError,
@@ -51,6 +52,16 @@ describe('category tree', () => {
     expect(labels).toEqual(['fun', 'movies', 'games', 'food', 'unc'])
     expect(categoryOptions(categories, 'expense', ['old']).map((o) => o.value)).toContain('old')
     expect(categoryOptions(categories, 'income').map((o) => o.value)).toEqual(['salary'])
+  })
+
+  test('Préstamo otorgado stays out of the picker unless kept, and budgets do not count it', () => {
+    const lent = category('lent', { key: DISBURSEMENT_KEY, name: 'Préstamo otorgado' })
+    const all = [...categories, lent]
+    expect(categoryOptions(all, 'expense').map((o) => o.value)).not.toContain('lent')
+    expect(categoryOptions(all, 'expense', ['lent']).map((o) => o.value)).toContain('lent')
+    expect(canHaveChildren(lent)).toBe(false)
+    const handedOver = { ...tx('2026-09-09', 4000, 'lent'), loan_id: 'l' }
+    expect(spentByCategory([...transactions, handedOver], '2026-09', 'unc', all).get('lent')).toBeUndefined()
   })
 
   test('Sin categoría and subcategories take no children', () => {

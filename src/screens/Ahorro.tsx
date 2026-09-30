@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
+import { useDossierSheet } from '../components/mobile'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, StatBar } from '../components/hud'
@@ -789,7 +790,8 @@ function RulesPanel({ data, onAdd }: { data: MoneyData; onAdd: (type: AddType, p
       {incomes.length === 0 ? (
         <FooterHint>Cuando registres tu ingreso principal, aquí ves qué regla le toca y si ya la aplicaste.</FooterHint>
       ) : (
-        <table className="roster">
+        <div className="roster-fit">
+        <table className="roster roster-stack">
           <thead>
             <tr>
               <th scope="col">Fecha</th>
@@ -806,13 +808,13 @@ function RulesPanel({ data, onAdd }: { data: MoneyData; onAdd: (type: AddType, p
               const moved = roundMoney(moves.reduce((sum, move) => sum + move.amount, 0))
               return (
                 <tr key={tx.uuid}>
-                  <td className="mono dim">{formatDate(isoToDate(tx.date))}</td>
-                  <td>
+                  <td className="mono dim" data-label="Fecha">{formatDate(isoToDate(tx.date))}</td>
+                  <td className="roster-title">
                     {rule ? RULE_LABEL[rule] : 'Elige la regla'}
                     <span className="row-sub">{`Ingreso ${money(tx.amount)}`}</span>
                   </td>
-                  <td className={`num mono${moved > 0 ? ' text-cyan' : ' dim'}`}>{moves.length > 0 ? money(moved) : 'Sin aplicar'}</td>
-                  <td className="num">
+                  <td className={`num mono${moved > 0 ? ' text-cyan' : ' dim'}`} data-label="Apartado">{moves.length > 0 ? money(moved) : 'Sin aplicar'}</td>
+                  <td className="row-actions">
                     {!applied && (
                       <button type="button" className="panel-verb" onClick={() => onAdd('savings_rule', { income_tx_id: tx.uuid, ...(rule ? { rule } : {}) })}>
                         Aplicar
@@ -824,6 +826,7 @@ function RulesPanel({ data, onAdd }: { data: MoneyData; onAdd: (type: AddType, p
             })}
           </tbody>
         </table>
+        </div>
       )}
     </Panel>
   )
@@ -838,18 +841,7 @@ export function Ahorro({
 }) {
   const data = useMoneyData()
   const [selected, setSelected] = useState<string | null>(null)
-  const dossierRef = useRef<HTMLElement>(null)
-  const dossierKey = selected
-  useEffect(() => {
-    if (!dossierKey) return
-    if (!window.matchMedia('(max-width: 899px)').matches) return
-    dossierRef.current?.focus({ preventScroll: true })
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelected(null)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [dossierKey])
+  const dossierRef = useDossierSheet(selected, () => setSelected(null))
   if (!data.loaded) return null
 
   const active = data.buckets.filter((bucket) => !bucket.archived)

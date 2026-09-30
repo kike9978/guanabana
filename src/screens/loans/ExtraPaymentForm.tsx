@@ -7,7 +7,7 @@ import type { MoneyData } from '../../db/useMoneyData'
 import { isoToDate, todayIso } from '../../lib/dates'
 import { formatDate, formatMoney } from '../../lib/format'
 import { pickValid } from '../../lib/forms'
-import { planExtraPayment, summarizeLoan, type ExtraMode } from '../../lib/loans'
+import { isUnscheduled, planExtraPayment, summarizeLoan, type ExtraMode } from '../../lib/loans'
 import { parseAmount } from '../../lib/parseAmount'
 
 const MODES: { value: ExtraMode; label: string }[] = [
@@ -27,6 +27,7 @@ const date = (iso: string | undefined) => (iso ? formatDate(isoToDate(iso)) : '�
 
 export function ExtraPaymentForm({ loan, data, onDone }: { loan: Loan; data: MoneyData; onDone: () => void }) {
   const borrowed = loan.direction === 'borrowed'
+  const unscheduled = isUnscheduled(loan)
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<ExtraMode>('shorten')
   const [accountId, setAccountId] = useState<string | null>(loan.pay_from_account_id)
@@ -72,8 +73,14 @@ export function ExtraPaymentForm({ loan, data, onDone }: { loan: Loan; data: Mon
 
   return (
     <form className="form" onSubmit={submit} noValidate>
-      <AmountField label="Abono extra (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
-      <ChoiceField label="Qué hacer con el abono" value={mode} onChange={setMode} options={MODES} />
+      <AmountField
+        label={unscheduled ? (borrowed ? 'Pago (MXN)' : 'Cobro (MXN)') : 'Abono extra (MXN)'}
+        value={amount}
+        onChange={(v) => { setAmount(v); setError(null) }}
+        invalid={error !== null}
+        autoFocus
+      />
+      {!unscheduled && <ChoiceField label="Qué hacer con el abono" value={mode} onChange={setMode} options={MODES} />}
       {activeAccount && (
         <SelectField label={borrowed ? 'Sale de' : 'Llega a'} value={activeAccount} onChange={setAccountId} options={accountOptions} />
       )}
@@ -93,6 +100,8 @@ export function ExtraPaymentForm({ loan, data, onDone }: { loan: Loan; data: Mon
             <td className="num mono">{money(summary.remaining)}</td>
             <td className="num mono text-cyan">{plan ? money(plan.remaining) : '—'}</td>
           </tr>
+          {!unscheduled && (
+          <>
           <tr>
             <td className="dim">Cuotas</td>
             <td className="num mono">{summary.installmentsLeft}</td>
@@ -108,15 +117,21 @@ export function ExtraPaymentForm({ loan, data, onDone }: { loan: Loan; data: Mon
             <td className="num mono">{date(summary.next ? summary.payoffDate : undefined)}</td>
             <td className="num mono">{plan ? (newPayoff ? date(newPayoff) : 'Hoy') : '—'}</td>
           </tr>
+          </>
+          )}
         </tbody>
       </table>
       <FieldNote>
-        {borrowed
-          ? 'El abono baja tu banco hoy. Las cuotas pagadas no cambian; solo se recalculan las pendientes.'
-          : 'El cobro sube tu banco hoy. Las cuotas cobradas no cambian; solo se recalculan las pendientes.'}
+        {unscheduled
+          ? borrowed
+            ? 'El pago sale de tu banco en esa fecha y baja lo que debes.'
+            : 'El cobro sube tu banco en esa fecha y baja lo que te deben.'
+          : borrowed
+            ? 'El abono baja tu banco hoy. Las cuotas pagadas no cambian; solo se recalculan las pendientes.'
+            : 'El cobro sube tu banco hoy. Las cuotas cobradas no cambian; solo se recalculan las pendientes.'}
       </FieldNote>
       {error && <FieldError>{error}</FieldError>}
-      <FormActions submitLabel="Registrar abono" saving={saving} onCancel={onDone} />
+      <FormActions submitLabel={unscheduled ? (borrowed ? 'Registrar pago' : 'Registrar cobro') : 'Registrar abono'} saving={saving} onCancel={onDone} />
     </form>
   )
 }

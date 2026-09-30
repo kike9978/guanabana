@@ -10,6 +10,7 @@ import { ExpenseForm } from './add/ExpenseForm'
 import { IncomeForm } from './add/IncomeForm'
 import { IncomeRuleForm } from './add/IncomeRuleForm'
 import { TransferForm } from './add/TransferForm'
+import { LoanForm } from './loans/LoanForm'
 
 export function AddScreen({
   type,
@@ -46,6 +47,7 @@ export function AddScreen({
               {type === 'transfer' && <TransferForm {...formProps} />}
               {type === 'cc_payment' && <CcPaymentForm {...formProps} />}
               {type === 'savings_rule' && <IncomeRuleForm {...formProps} />}
+              {type === 'loan' && <LoanForm data={data} onDone={onDone} />}
             </>
           )}
         </Panel>

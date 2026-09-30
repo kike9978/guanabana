@@ -10,6 +10,7 @@ import {
   type Route,
   type SubScreen,
 } from './app/navigation'
+import { useRouter } from './app/router'
 import { AddSheet } from './components/AddSheet'
 import { CommandBar } from './components/CommandBar'
 import { LockGate } from './components/LockGate'
@@ -45,21 +46,21 @@ function routePath(route: Route): string[] {
 
 function App() {
   const db = useLocalDb()
-  const [route, setRoute] = useState<Route>({ kind: 'tab', tab: 'inicio' })
+  const { route, navigate, back: backTo } = useRouter()
   const [addOpen, setAddOpen] = useState(false)
 
   const currentTab = route.kind === 'tab' ? route.tab : route.from
   const currentScreen = route.kind === 'screen' ? route.screen : undefined
   const back = () =>
-    setRoute(route.kind === 'add' && route.screen ? { kind: 'screen', screen: route.screen, from: currentTab } : { kind: 'tab', tab: currentTab })
+    backTo(route.kind === 'add' && route.screen ? { kind: 'screen', screen: route.screen, from: currentTab } : { kind: 'tab', tab: currentTab })
   const openAdd = (type: AddType, prefill?: AddPrefill) => {
     setAddOpen(false)
-    setRoute({ kind: 'add', type, from: currentTab, prefill, screen: currentScreen })
+    navigate({ kind: 'add', type, from: currentTab, prefill, screen: currentScreen })
   }
-  const openScreen = (screen: SubScreen) => setRoute({ kind: 'screen', screen, from: currentTab })
+  const openScreen = (screen: SubScreen) => navigate({ kind: 'screen', screen, from: currentTab })
   const openAccounts = () => openScreen('accounts')
   const openEdit = (tx: EditableTransaction) =>
-    setRoute({ kind: 'add', type: tx.type, from: currentTab, prefill: prefillFrom(tx), editing: tx })
+    navigate({ kind: 'add', type: tx.type, from: currentTab, prefill: prefillFrom(tx), editing: tx })
 
   function renderStage() {
     if (route.kind === 'add') {
@@ -70,7 +71,7 @@ function App() {
           prefill={route.prefill}
           editing={route.editing}
           onDone={back}
-          onNext={(type, prefill) => setRoute({ ...route, type, prefill, editing: undefined })}
+          onNext={(type, prefill) => navigate({ ...route, type, prefill, editing: undefined }, { replace: true })}
           onOpenAccounts={openAccounts}
         />
       )
@@ -83,7 +84,7 @@ function App() {
     }
     switch (route.tab) {
       case 'inicio':
-        return <Inicio onAdd={openAdd} onOpenScreen={openScreen} onOpenAhorro={() => setRoute({ kind: 'tab', tab: 'ahorro' })} />
+        return <Inicio onAdd={openAdd} onOpenScreen={openScreen} onOpenAhorro={() => navigate({ kind: 'tab', tab: 'ahorro' })} />
       case 'tiempo':
         return <Tiempo onAdd={openAdd} onOpenScreen={openScreen} />
       case 'movimientos':
@@ -102,7 +103,7 @@ function App() {
         <main className="stage">{renderStage()}</main>
         <CommandBar
           active={route.kind === 'tab' ? route.tab : null}
-          onSelect={(tab) => setRoute({ kind: 'tab', tab })}
+          onSelect={(tab) => navigate({ kind: 'tab', tab })}
           onAdd={() => setAddOpen(true)}
         />
         <AddSheet open={addOpen} onClose={() => setAddOpen(false)} onPick={(type) => openAdd(type)} />

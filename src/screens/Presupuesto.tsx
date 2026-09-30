@@ -1,15 +1,18 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
+import { useDossierSheet } from '../components/mobile'
 import { AmountField, FieldError, FieldNote, FormActions, SelectField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, StatBar } from '../components/hud'
 import { removeBudget, setBudget } from '../db/budgets'
 import { UNCATEGORIZED_KEY } from '../db/seed'
-import type { Category } from '../db/types'
+import type { Category, PlanItem } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
+import { useRecords } from '../db/useRecords'
 import {
   budgetRows,
   budgetTone,
   budgetTotals,
   expectedIncome,
+  plannedByCategory,
   limitFor,
   monthKey,
   monthPace,
@@ -198,8 +201,12 @@ export function Presupuesto({ data, header }: { data: MoneyData; header: ReactNo
   const today = new Date()
   const [month, setMonth] = useState(monthKey(today))
   const [selected, setSelected] = useState<string | null>(null)
+  const dossierRef = useDossierSheet(selected, () => setSelected(null))
+  const wishes = useRecords<PlanItem>('plan_items') ?? []
+  const planned = plannedByCategory(wishes, data.transactions, month)
   const fallbackId = data.categories.find((c) => c.key === UNCATEGORIZED_KEY)?.uuid ?? null
-  const rows = budgetRows(data.budgets, data.categories, data.transactions, month, today, fallbackId)
+  const rows = budgetRows(data.budgets, data.categories, data.transactions, month, today, fallbackId, planned)
+  const plannedOf = (ids: string[]) => roundMoney(ids.reduce((sum, id) => sum + (planned.get(id) ?? 0), 0))
   const totals = budgetTotals(rows)
   const income = expectedIncome(data.recurring, data.transactions, month)
   const pace = monthPace(month, today)
@@ -257,23 +264,32 @@ export function Presupuesto({ data, header }: { data: MoneyData; header: ReactNo
             <FooterHint>Sin límites ni gastos este mes. Pon un límite para ver tu ritmo.</FooterHint>
           ) : (
             <div className="stat-list">
-              {[...budgeted, ...loose].map((row) => (
-                <button
-                  key={row.category.uuid}
-                  type="button"
-                  className="stat-button"
-                  aria-pressed={row.category.uuid === selected}
-                  onClick={() => setSelected(row.category.uuid === selected ? null : row.category.uuid)}
-                >
-                  <StatBar
-                    label={row.category.name}
-                    value={row.limit === null ? `${money(row.spent)} · sin límite` : `${money(row.spent)} / ${money(row.limit)}`}
-                    ratio={row.limit === null ? (totals.spentTotal > 0 ? row.spent / totals.spentTotal : 0) : row.ratio}
-                    tone={row.limit === null ? 'empty' : row.tone}
-                    marker={row.limit === null ? undefined : pace}
-                  />
-                </button>
-              ))}
+              {[...budgeted, ...loose].map((row) => {
+                const plannedAmount = plannedOf([row.category.uuid, ...row.children.map((child) => child.category.uuid)])
+                return (
+                  <button
+                    key={row.category.uuid}
+                    type="button"
+                    className="stat-button"
+                    aria-pressed={row.category.uuid === selected}
+                    onClick={() => setSelected(row.category.uuid === selected ? null : row.category.uuid)}
+                  >
+                    <StatBar
+                      label={row.category.name}
+                      value={row.limit === null ? `${money(row.spent)} · sin límite` : `${money(row.spent)} / ${money(row.limit)}`}
+                      ratio={row.limit === null ? (totals.spentTotal > 0 ? row.spent / totals.spentTotal : 0) : row.ratio}
+                      tone={row.limit === null ? 'empty' : row.tone}
+                      marker={row.limit === null ? undefined : pace}
+                    />
+                    {plannedAmount > 0 && (
+                      <span className="row-sub">
+                        {`Planeado ${money(plannedAmount)}`}
+                        {row.limit !== null && row.spent + plannedAmount > row.limit ? ' · con esto pasa el límite' : ''}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           )}
         </Panel>
@@ -288,14 +304,14 @@ export function Presupuesto({ data, header }: { data: MoneyData; header: ReactNo
         {budgeted.length > 0 && <FooterHint>La línea en cada barra marca cuánto del mes ha pasado.</FooterHint>}
       </div>
       {creating && (
-        <aside className="dossier" aria-label="Nuevo límite">
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label="Nuevo límite">
           <Panel title="Nuevo límite">
             <LimitForm data={data} category={null} month={month} onDone={(id) => setSelected(id)} />
           </Panel>
         </aside>
       )}
       {selectedRow && (
-        <aside className="dossier" aria-label={selectedRow.category.name}>
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label={selectedRow.category.name}>
           <CategoryDossier key={selectedRow.category.uuid} row={selectedRow} parent={selectedParent} data={data} month={month} pace={pace} onSelect={setSelected} onClose={() => setSelected(null)} />
         </aside>
       )}

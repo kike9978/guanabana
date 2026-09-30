@@ -33,7 +33,8 @@ export function occurrencesBetween(day: number, from: Date, to: Date): Date[] {
 
 export type RepeatFields = Pick<RecurringItem, 'frequency' | 'interval' | 'due_day' | 'start_date'>
 
-export function repeatOf(item: RepeatFields): { frequency: 'monthly' | 'weekly'; interval: number } {
+export function repeatOf(item: RepeatFields): { frequency: 'monthly' | 'weekly' | 'once'; interval: number } {
+  if (item.frequency === 'once') return { frequency: 'once', interval: 1 }
   return { frequency: item.frequency ?? 'monthly', interval: Math.max(1, item.interval ?? 1) }
 }
 
@@ -44,6 +45,7 @@ export function isPlainMonthly(item: RepeatFields): boolean {
 
 export function occurrencesPerYear(item: RepeatFields): number {
   const { frequency, interval } = repeatOf(item)
+  if (frequency === 'once') return 0
   return frequency === 'weekly' ? 52 / interval : 12 / interval
 }
 
@@ -61,6 +63,8 @@ export function itemOccurrences(item: RepeatFields, from: Date, to: Date): Date[
   const end = noon(to)
   const anchor = isoToDate(item.start_date)
   const result: Date[] = []
+
+  if (frequency === 'once') return anchor >= start && anchor < end ? [anchor] : []
 
   if (frequency === 'weekly') {
     const step = 7 * interval
@@ -85,6 +89,10 @@ export function itemOccurrences(item: RepeatFields, from: Date, to: Date): Date[
 /** The next `count` occurrences on or after `from`, never before `start_date`. */
 export function nextOccurrences(item: RepeatFields, from: Date, count: number): Date[] {
   const { frequency, interval } = repeatOf(item)
+  if (frequency === 'once') {
+    const due = isoToDate(item.start_date)
+    return count > 0 && due >= noon(from) ? [due] : []
+  }
   const floor = isoToDate(item.start_date) > noon(from) ? isoToDate(item.start_date) : noon(from)
   const spanDays = (frequency === 'weekly' ? 7 * interval : 31 * interval) * (count + 1)
   const to = new Date(floor.getFullYear(), floor.getMonth(), floor.getDate() + spanDays, 12)
@@ -152,7 +160,7 @@ export function billCommitments(
   const now = noon(today)
 
   return recurring
-    .filter((item) => item.active && item.type === 'bill')
+    .filter((item) => item.active && item.type === 'bill' && item.frequency !== 'once')
     .flatMap((item) =>
       itemOccurrences(item, cycle.start, cycle.end)
         .map((date) => ({ date, occurrence: dateToIso(date) }))
@@ -172,6 +180,49 @@ export function billCommitments(
           accountId: item.account_id,
         })),
     )
+}
+
+/**
+ * One-time bills already generated and not yet registered. They reserve from `issued_on`,
+ * even when the due date is after the next income. Paying one removes the reserve.
+ */
+export function invoiceCommitments(
+  recurring: RecurringItem[],
+  transactions: Transaction[],
+  today: Date,
+  overrides: RecurringOverride[] = [],
+): Commitment[] {
+  const paid = new Set(
+    transactions.filter((tx) => tx.recurring_id && tx.occurrence).map((tx) => `${tx.recurring_id}|${tx.occurrence}`),
+  )
+  const adjusted = overrideIndex(overrides)
+  const now = noon(today)
+  const todayKey = dateToIso(now)
+
+  return recurring
+    .filter((item) => item.active && item.type === 'bill' && item.frequency === 'once')
+    .flatMap((item) => {
+      const due = item.start_date
+      const issued = item.issued_on ?? due
+      if (issued > todayKey || paid.has(`${item.uuid}|${due}`)) return []
+      const amount = occurrenceAmount(item, due, adjusted) ?? 0
+      if (amount <= 0) return []
+      const date = isoToDate(due)
+      return [
+        {
+          key: `${item.uuid}-${due}`,
+          kind: 'bill' as const,
+          date,
+          label: item.name,
+          amount,
+          overdue: date < now,
+          recurringId: item.uuid,
+          occurrence: due,
+          categoryId: item.category_id,
+          accountId: item.account_id,
+        },
+      ]
+    })
 }
 
 export function loanCommitments(

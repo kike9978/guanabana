@@ -1,7 +1,9 @@
-import type { Budget, Category, RecurringItem, Transaction } from '../db/types'
+import type { Budget, Category, PlanItem, RecurringItem, Transaction } from '../db/types'
 import type { Tone } from '../components/hud'
 import { childrenOf, isTopLevel, topCategoryId } from './categories'
 import { itemOccurrences, occurrencesPerYear } from './cycle'
+import { isSpending } from './ledger'
+import { isBought } from './plan'
 import { roundMoney } from './money'
 
 export function monthKey(date: Date): string {
@@ -33,7 +35,7 @@ export function spentByCategory(
   const spent = new Map<string, number>()
   const add = (id: string, amount: number) => spent.set(id, roundMoney((spent.get(id) ?? 0) + amount))
   for (const tx of transactions) {
-    if (tx.type !== 'expense' || !tx.date.startsWith(month)) continue
+    if (!isSpending(tx) || !tx.date.startsWith(month)) continue
     const id = tx.category_id ?? fallbackId
     if (!id) continue
     add(id, tx.amount)
@@ -99,6 +101,16 @@ export function budgetTone(spent: number, limit: number | null, pace: number): T
   return spent > 0 ? 'safe' : 'empty'
 }
 
+/** Active dated wishes in the month. Not spending: the screen shows them as Planeado. */
+export function plannedByCategory(items: PlanItem[], transactions: Transaction[], month: string): Map<string, number> {
+  const totals = new Map<string, number>()
+  for (const item of items) {
+    if (!item.enabled || item.status !== 'planned' || !item.category_id || !item.target_date?.startsWith(month) || isBought(item, transactions)) continue
+    totals.set(item.category_id, roundMoney((totals.get(item.category_id) ?? 0) + item.amount))
+  }
+  return totals
+}
+
 export function budgetRows(
   budgets: Budget[],
   categories: Category[],
@@ -106,6 +118,7 @@ export function budgetRows(
   month: string,
   today: Date,
   fallbackId: string | null,
+  planned: Map<string, number> = new Map(),
 ): BudgetRow[] {
   const spent = spentByCategory(transactions, month, fallbackId, categories)
   const pace = monthPace(month, today)
@@ -135,7 +148,10 @@ export function budgetRows(
           .filter((child) => child.limit !== null || child.spent !== 0 || !child.category.archived),
       ),
     )
-    .filter((row) => row.limit !== null || row.spent !== 0)
+    .filter((row) => {
+      const plannedHere = (planned.get(row.category.uuid) ?? 0) + row.children.reduce((sum, child) => sum + (planned.get(child.category.uuid) ?? 0), 0)
+      return row.limit !== null || row.spent !== 0 || plannedHere > 0
+    })
   return rows.sort(
     (a, b) => Number(a.limit === null) - Number(b.limit === null) || b.ratio - a.ratio || b.spent - a.spent,
   )

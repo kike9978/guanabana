@@ -10,6 +10,7 @@ export interface RealAvailableBreakdown {
   ccReserve: number
   ccMsiPending: number
   billsBeforeNextIncome: number
+  invoicesOutstanding: number
   loanInstallmentsBeforeNextIncome: number
   bucketsInLiquid: number
   buffer: number
@@ -21,6 +22,7 @@ export interface RealAvailableInput {
   cards: CreditCard[]
   buffer: number
   billsBeforeNextIncome?: number
+  invoicesOutstanding?: number
   loanInstallmentsBeforeNextIncome?: number
   bucketsInLiquid?: number
   msiPending?: Record<string, number>
@@ -42,6 +44,7 @@ export function computeRealAvailable({
   cards,
   buffer,
   billsBeforeNextIncome = 0,
+  invoicesOutstanding = 0,
   loanInstallmentsBeforeNextIncome = 0,
   bucketsInLiquid = 0,
   msiPending = {},
@@ -53,7 +56,15 @@ export function computeRealAvailable({
   const fullDebt = ccReserve(cards)
 
   const total = roundMoney(
-    bank + cash + unassigned - reserve - billsBeforeNextIncome - loanInstallmentsBeforeNextIncome - bucketsInLiquid - buffer,
+    bank +
+      cash +
+      unassigned -
+      reserve -
+      billsBeforeNextIncome -
+      invoicesOutstanding -
+      loanInstallmentsBeforeNextIncome -
+      bucketsInLiquid -
+      buffer,
   )
 
   return {
@@ -63,6 +74,7 @@ export function computeRealAvailable({
     ccReserve: roundMoney(reserve),
     ccMsiPending: roundMoney(fullDebt - reserve),
     billsBeforeNextIncome,
+    invoicesOutstanding,
     loanInstallmentsBeforeNextIncome,
     bucketsInLiquid,
     buffer,

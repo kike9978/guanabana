@@ -1,7 +1,7 @@
-import { planExtraPayment, type ExtraMode, type ScheduleRow } from '../lib/loans'
+import { isUnscheduled, planExtraPayment, type ExtraMode, type ScheduleRow } from '../lib/loans'
 import { newRecord, writeAcross } from './db'
-import { draftTransaction, recordWithInstallments } from './ledger'
-import type { Loan, LoanInstallment, RecurringItem, RecurringOverride, Transaction } from './types'
+import { draftTransaction, recordLoan, recordWithInstallments, removeLoan } from './ledger'
+import type { Account, Loan, LoanInstallment, RecurringItem, RecurringOverride, Transaction } from './types'
 
 type RecurringFields = Omit<RecurringItem, 'uuid' | 'updated_at'>
 
@@ -34,19 +34,42 @@ export async function removeOverride(existing: RecurringOverride): Promise<void>
   await writeAcross([{ store: 'recurring_overrides', delete: [existing.uuid] }])
 }
 
+const METHOD_FOR_ACCOUNT: Partial<Record<Account['type'], Transaction['payment_method']>> = {
+  checking: 'bank',
+  cash: 'cash',
+  unassigned: 'unassigned',
+}
+
+/** Where lent money left from. Without it the loan is saved alone (“Ya lo registré”). */
+export interface Disbursement {
+  account: Account
+  date: string
+  category_id: string | null
+}
+
 export async function createLoan(
   fields: Omit<Loan, 'uuid' | 'updated_at' | 'status'>,
   rows: ScheduleRow[],
   settledCount = 0,
+  disbursement?: Disbursement,
 ): Promise<void> {
   const loan = newRecord<Loan>({ ...fields, status: 'active' })
   const installments = rows.map((row, index) =>
     newRecord<LoanInstallment>({ ...row, loan_id: loan.uuid, status: index < settledCount ? 'settled' : 'scheduled' }),
   )
-  await writeAcross([
-    { store: 'loans', put: [loan] },
-    { store: 'loan_installments', put: installments },
-  ])
+  const handedOver = disbursement && loan.direction === 'lent'
+    ? draftTransaction({
+        type: 'expense',
+        amount: loan.principal,
+        date: disbursement.date,
+        account_id: disbursement.account.uuid,
+        payment_method: METHOD_FOR_ACCOUNT[disbursement.account.type] ?? 'bank',
+        category_id: disbursement.category_id,
+        notes: `Préstamo ${loan.name}`,
+        loan_id: loan.uuid,
+      })
+    : undefined
+  await recordLoan(loan, installments, handedOver)
 }
 
 export async function recordExtraPayment(
@@ -69,7 +92,7 @@ export async function recordExtraPayment(
     account_id: fields.account_id,
     payment_method: loan.direction === 'borrowed' ? fields.payment_method : null,
     category_id: fields.category_id,
-    notes: `Abono extra ${loan.name}`,
+    notes: `${isUnscheduled(loan) ? 'Abono' : 'Abono extra'} ${loan.name}`,
     loan_extra_id: loan.uuid,
   })
   const now = new Date().toISOString()
@@ -80,10 +103,20 @@ export async function recordExtraPayment(
   await recordWithInstallments(record, [...replaced, ...created])
 }
 
-export async function deleteLoan(loan: Loan, installments: LoanInstallment[]): Promise<void> {
+/** Keeps the lending movement unless `disbursement` is passed; then it is deleted and its balance comes back. */
+export async function deleteLoan(loan: Loan, installments: LoanInstallment[], disbursement?: Transaction): Promise<void> {
+  const rows = installments.filter((row) => row.loan_id === loan.uuid).map((row) => row.uuid)
+  await removeLoan(loan, rows, disbursement)
+}
+
+export type LoanDetails = Pick<Loan, 'name' | 'lender_label' | 'pay_from_account_id'>
+
+/** Details and unpaid rows only. Paid rows and balances never change here. */
+export async function updateLoan(loan: Loan, details: LoanDetails, rows: LoanInstallment[]): Promise<void> {
+  const now = new Date().toISOString()
   await writeAcross([
-    { store: 'loans', delete: [loan.uuid] },
-    { store: 'loan_installments', delete: installments.filter((row) => row.loan_id === loan.uuid).map((row) => row.uuid) },
+    { store: 'loans', put: [{ ...loan, ...details, updated_at: now }] },
+    { store: 'loan_installments', put: rows.map((row) => ({ ...row, updated_at: now })) },
   ])
 }
 

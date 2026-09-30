@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
 import { slotDays } from './incomeRules'
-import { buildSchedule, incomeDueDates, planExtraPayment, summarizeLoan } from './loans'
+import { buildSchedule, editOpenRows, incomeDueDates, isUnscheduled, outstanding, planExtraPayment, summarizeLoan } from './loans'
 
 const base = { updated_at: '2026-09-01T00:00:00.000Z' }
 
@@ -78,6 +78,75 @@ describe('extra payments', () => {
     expect(plan.rows[0].amount).toBeLessThanOrEqual(before)
     const principal = plan.rows.reduce((sum, row) => sum + row.principal_part, 0)
     expect(Math.round(principal * 100) / 100).toBe(plan.remaining)
+  })
+})
+
+describe('loans without dates', () => {
+  const family = { ...loan, uuid: 'mom', frequency: 'unscheduled', installment_count: 0, principal: 5000 } as Loan
+
+  test('the balance is the whole principal until an abono lowers it', () => {
+    expect(isUnscheduled(family)).toBe(true)
+    expect(summarizeLoan(family, [], []).remaining).toBe(5000)
+    const abono = { loan_extra_id: 'mom', amount: 1200 } as Transaction
+    const summary = summarizeLoan(family, [], [abono])
+    expect(summary).toMatchObject({ remaining: 3800, paid: 1200, next: undefined, payoffDate: undefined })
+  })
+
+  test('an abono never creates installments', () => {
+    const plan = planExtraPayment(family, [], [], 2000, 'shorten')
+    expect(plan).toEqual({ remaining: 3000, replaced: [], rows: [] })
+  })
+
+  test('outstanding adds only active loans in one direction', () => {
+    const lent = { ...family, uuid: 'sis', direction: 'lent' } as Loan
+    const lost = { ...lent, uuid: 'friend', status: 'written_off' } as Loan
+    const loans = [family, lent, lost]
+    expect(outstanding('borrowed', loans, [], [])).toBe(5000)
+    expect(outstanding('lent', loans, [], [{ loan_extra_id: 'sis', amount: 500 } as Transaction])).toBe(4500)
+  })
+})
+
+describe('editing the open schedule', () => {
+  const rows = schedule(loan, 12, 2)
+  const open = rows.slice(2)
+
+  test('a new date changes only that row', () => {
+    const edit = editOpenRows(loan, open, 10000, { r3: { due_date: '2026-12-20' } })
+    expect(edit.problem).toBeNull()
+    expect(edit.changed).toHaveLength(1)
+    expect(edit.changed[0]).toMatchObject({ uuid: 'r3', due_date: '2026-12-20', amount: 1000 })
+  })
+
+  test('without interest, moving money between rows keeps the principal whole', () => {
+    const edit = editOpenRows(loan, open, 10000, { r2: { amount: 1500 }, r3: { amount: 500 } })
+    expect(edit.problem).toBeNull()
+    expect(edit.changed.map((row) => row.principal_part)).toEqual([1500, 500])
+  })
+
+  test('without interest, a total that no longer matches the remaining is blocked', () => {
+    const edit = editOpenRows(loan, open, 10000, { r2: { amount: 1500 } })
+    expect(edit.problem).toEqual({ kind: 'total', principal: 10500, remaining: 10000 })
+  })
+
+  test('a fixed installment changes interest, never below its principal', () => {
+    const fixed = { ...loan, interest: 'fixed_installment', installment_amount: 1200 } as Loan
+    const fixedOpen = schedule(fixed, 12).slice(2)
+    const higher = editOpenRows(fixed, fixedOpen, 10000, { r2: { amount: 1300 } })
+    expect(higher.problem).toBeNull()
+    expect(higher.changed[0]).toMatchObject({ principal_part: 1000, interest_part: 300 })
+    expect(editOpenRows(fixed, fixedOpen, 10000, { r2: { amount: 900 } }).problem).toEqual({ kind: 'below_principal', principal: 1000 })
+  })
+
+  test('an annual rate keeps its amounts', () => {
+    const rated = { ...loan, interest: 'fixed_rate', rate_annual: 24 } as Loan
+    const ratedOpen = schedule(rated, 12)
+    const edit = editOpenRows(rated, ratedOpen, 12000, { r0: { amount: 50, due_date: '2026-10-10' } })
+    expect(edit.changed[0]).toMatchObject({ due_date: '2026-10-10', amount: ratedOpen[0].amount })
+  })
+
+  test('an empty amount or date is blocked', () => {
+    expect(editOpenRows(loan, open, 10000, { r2: { amount: null } }).problem).toEqual({ kind: 'missing' })
+    expect(editOpenRows(loan, open, 10000, { r2: { due_date: '' } }).problem).toEqual({ kind: 'missing' })
   })
 })
 

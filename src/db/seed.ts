@@ -1,5 +1,6 @@
-import { UNCATEGORIZED_KEY } from '../lib/categories'
+import { DISBURSEMENT_KEY, UNCATEGORIZED_KEY } from '../lib/categories'
 import { count, getAll, newRecord, putMany } from './db'
+import { migrateScenarios } from './plan'
 import type { BucketRule, Category, CategoryKind, SavingsBucket, Settings } from './types'
 
 export { UNCATEGORIZED_KEY }
@@ -15,6 +16,7 @@ const CATEGORY_SEEDS: Array<[key: string, name: string, kind: CategoryKind]> = [
   ['entertainment', 'Entretenimiento', 'expense'],
   ['personal', 'Personal', 'expense'],
   ['loan_payment', 'Pago de préstamo', 'expense'],
+  [DISBURSEMENT_KEY, 'Préstamo otorgado', 'expense'],
   [UNCATEGORIZED_KEY, 'Sin categoría', 'expense'],
   ['contract_income', 'Ingreso principal', 'income'],
   ['other_income', 'Otros ingresos', 'income'],
@@ -75,6 +77,7 @@ let ready: Promise<DbSummary> | null = null
 export function initDb(): Promise<DbSummary> {
   ready ??= (async () => {
     await seedDefaults()
+    await migrateScenarios()
     void navigator.storage?.persist?.()
     return { categories: await count('categories') }
   })().catch((error: unknown) => {

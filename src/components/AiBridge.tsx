@@ -478,7 +478,8 @@ function StatementPreview({
       ) : (
         <SelectField label="Cuenta" value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.uuid, label: a.name }))} />
       )}
-      <table className="roster">
+      <div className="roster-fit">
+      <table className="roster roster-stack">
         <thead>
           <tr>
             <th scope="col">Fecha</th>
@@ -493,6 +494,7 @@ function StatementPreview({
           ))}
         </tbody>
       </table>
+      </div>
       {account && projected !== null && (
         <FieldNote>
           {account.name} pasa de {formatMoney(account.current_balance, 'MXN')} a {formatMoney(projected, 'MXN')}.
@@ -521,13 +523,13 @@ function StatementLine({ row, excluded, onToggle }: { row: StatementRow; exclude
   const flag = row.duplicate === 'exact' ? 'Ya registrado' : row.duplicate === 'possible' ? 'Posible duplicado' : row.recurringName ? `Parece ${row.recurringName}` : ''
   return (
     <tr className={excluded ? 'dim' : undefined}>
-      <td className="mono">{row.date.slice(8)}</td>
-      <td>
+      <td className="mono" data-label="Fecha">{row.date.slice(8)}</td>
+      <td className="roster-title">
         {row.description || '—'}
         {flag && <span className="row-sub">{flag}</span>}
       </td>
-      <td className={`num mono${row.direction === 'in' ? ' text-cyan' : ''}`}>{formatMoney(row.direction === 'in' ? row.amount : -row.amount, 'MXN')}</td>
-      <td>
+      <td className={`num mono${row.direction === 'in' ? ' text-cyan' : ''}`} data-label="Monto">{formatMoney(row.direction === 'in' ? row.amount : -row.amount, 'MXN')}</td>
+      <td className="row-actions">
         <button type="button" className="panel-verb" onClick={onToggle}>
           {excluded ? 'Incluir' : 'Omitir'}
         </button>

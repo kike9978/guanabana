@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useScrollIntoView } from '../components/mobile'
 import { AmountField, FieldError, FieldNote, FormActions, SelectField, TextField } from '../components/fields'
 import { FooterHint, Panel } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
@@ -6,7 +7,7 @@ import { isLiquid, selectable } from '../db/accounts'
 import { createRecurring, deleteRecurring, updateRecurring } from '../db/commitments'
 import type { RecurringItem, Transaction } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
-import { billCommitments, incomeCycle, itemOccurrences, nextOccurrences, repeatOf, sumCommitments } from '../lib/cycle'
+import { billCommitments, incomeCycle, invoiceCommitments, itemOccurrences, nextOccurrences, repeatOf, sumCommitments } from '../lib/cycle'
 import { dateToIso, isoToDate, todayIso } from '../lib/dates'
 import { formatDate, formatMoney } from '../lib/format'
 import { pickValid } from '../lib/forms'
@@ -66,7 +67,9 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
   const [amount, setAmount] = useState(item?.amount != null ? String(item.amount) : '')
   const [repeat, setRepeat] = useState<RepeatKey>(itemKey ?? 'm1')
   const [weekday, setWeekday] = useState(String(itemWeekday ?? DEFAULT_WEEKDAY))
-  const [day, setDay] = useState(item ? String(item.due_day) : '')
+  const [day, setDay] = useState(item && item.frequency !== 'once' ? String(item.due_day) : '')
+  const [issuedOn, setIssuedOn] = useState(item?.issued_on ?? todayKey)
+  const [dueOn, setDueOn] = useState(item?.frequency === 'once' ? item.start_date : '')
   const [start, setStart] = useState<string | null>(null)
   const [sourceId, setSourceId] = useState<string | null>(item?.cc_id ?? item?.account_id ?? null)
   const [categoryId, setCategoryId] = useState<string | null>(item?.category_id ?? null)
@@ -89,11 +92,14 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
   const repeatOptions = REPEAT_OPTIONS.filter((option) => kind === 'bill' || !option.billOnly)
   const { frequency, interval } = parseRepeatKey(repeat)
   const weekly = frequency === 'weekly'
+  const once = frequency === 'once'
   const weekdayValue = Number(weekday)
   const dueDay = parseDay(day)
-  const phaseKnown = weekly || dueDay !== null
+  const phaseKnown = once ? dueOn !== '' : weekly || dueDay !== null
   const samePhase =
-    item !== undefined && repeat === itemKey && (weekly ? weekdayValue === itemWeekday : dueDay === item.due_day)
+    item !== undefined &&
+    repeat === itemKey &&
+    (once ? dueOn === item.start_date && issuedOn === (item.issued_on ?? '') : weekly ? weekdayValue === itemWeekday : dueDay === item.due_day)
 
   const choices = needsStart(repeat) && phaseKnown ? startChoices(repeat, weekdayValue, dueDay ?? 1, today).map(dateToIso) : []
   const currentNext = item && samePhase ? nextOccurrences(item, today, 1)[0] : undefined
@@ -101,6 +107,7 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
   const chosenStart = start && choices.includes(start) ? start : defaultStart
 
   function startDate(): string {
+    if (once) return dueOn
     if (item && samePhase && (!needsStart(repeat) || chosenStart === defaultStart)) return item.start_date
     if (needsStart(repeat)) return chosenStart
     if (weekly) return dateToIso(startChoices('w1', weekdayValue, 1, today)[0])
@@ -114,8 +121,9 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         amount: amount.trim() === '' ? null : parseAmount(amount),
         frequency,
         interval,
-        due_day: weekly ? (item?.due_day ?? isoToDate(startDate()).getDate()) : dueDay!,
+        due_day: once ? isoToDate(dueOn).getDate() : weekly ? (item?.due_day ?? isoToDate(startDate()).getDate()) : dueDay!,
         start_date: startDate(),
+        issued_on: once ? issuedOn : null,
       }
     : null
   const preview = draft ? nextOccurrences(draft, today, PREVIEW_COUNT) : []
@@ -141,19 +149,21 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         })
       : []
   const keptOverrides = data.overrides.filter((row) => !orphaned.includes(row))
-  const availableChange =
-    item && draft && kind === 'bill'
-      ? roundMoney(
-          sumCommitments(billCommitments([item], data.transactions, cycle, today, data.overrides)) -
-            sumCommitments(billCommitments([draft], data.transactions, cycle, today, keptOverrides)),
-        )
-      : 0
+  const reserved = (rows: RecurringItem[], overrides: MoneyData['overrides']) =>
+    roundMoney(
+      sumCommitments(billCommitments(rows, data.transactions, cycle, today, overrides)) +
+        sumCommitments(invoiceCommitments(rows, data.transactions, today, overrides)),
+    )
+  const availableChange = draft && kind === 'bill' ? roundMoney(reserved(item ? [item] : [], data.overrides) - reserved([draft], keptOverrides)) : 0
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     const value = amount.trim() === '' ? null : parseAmount(amount)
     if (!name.trim()) return setError('Ponle un nombre.')
-    if (!weekly && dueDay === null) return setError('El día va del 1 al 31.')
+    if (once && !issuedOn) return setError('Elige el día en que la generaste.')
+    if (once && !dueOn) return setError('Elige la fecha límite.')
+    if (once && dueOn < issuedOn) return setError('La fecha límite no puede ser anterior al día en que la generaste.')
+    if (!once && !weekly && dueDay === null) return setError('El día va del 1 al 31.')
     if (kind === 'bill' && (value === null || value <= 0)) return setError('Escribe el monto del pago.')
     if (amount.trim() !== '' && value === null) return setError('Revisa el monto.')
     if (!draft) return
@@ -171,6 +181,7 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
         interval,
         due_day: draft.due_day,
         start_date: draft.start_date,
+        issued_on: once ? issuedOn : null,
         account_id: isCard ? null : activeSource || null,
         cc_id: isCard ? (activeSource ?? null) : null,
         category_id: activeCategory ?? null,
@@ -189,12 +200,18 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
       <TextField label="Nombre" value={name} onChange={setName} placeholder={copy.namePlaceholder} autoFocus />
       <div className="field-row">
         <SelectField label="Se repite" value={repeat} onChange={(value) => setRepeat(value as RepeatKey)} options={repeatOptions} />
-        {weekly ? (
+        {once ? null : weekly ? (
           <SelectField label="Día" value={weekday} onChange={setWeekday} options={WEEKDAYS.map((label, index) => ({ value: String(index), label }))} />
         ) : (
           <TextField label="Día del mes" value={day} onChange={setDay} inputMode="numeric" placeholder={kind === 'income' ? '15' : '1'} mono />
         )}
       </div>
+      {once && (
+        <div className="field-row">
+          <TextField label="Generado el" type="date" value={issuedOn} onChange={setIssuedOn} mono />
+          <TextField label="Fecha límite" type="date" value={dueOn} onChange={setDueOn} mono />
+        </div>
+      )}
       {choices.length > 1 && (
         <SelectField
           label={weekly ? `¿Cuál ${WEEKDAYS[weekdayValue]} es el próximo?` : '¿Cuándo es el próximo?'}
@@ -203,7 +220,15 @@ function RecurringForm({ kind, data, item, onDone }: { kind: Kind; data: MoneyDa
           options={choices.map((iso) => ({ value: iso, label: formatDate(isoToDate(iso)) }))}
         />
       )}
-      {preview.length > 0 && <FieldNote>{`Próximas: ${preview.map((date) => formatDate(date)).join(' · ')}`}</FieldNote>}
+      {once && dueOn ? (
+        <FieldNote>
+          {issuedOn > todayKey
+            ? `Todavía no se aparta. Empieza el ${formatDate(isoToDate(issuedOn))}, y vence el ${formatDate(isoToDate(dueOn))}.`
+            : `Se aparta de tu Disponible real desde el ${formatDate(isoToDate(issuedOn))} hasta que lo pagues. Fecha límite: ${formatDate(isoToDate(dueOn))}.`}
+        </FieldNote>
+      ) : (
+        preview.length > 0 && <FieldNote>{`Próximas: ${preview.map((date) => formatDate(date)).join(' · ')}`}</FieldNote>
+      )}
       <AmountField label={copy.amountLabel} value={amount} onChange={setAmount} />
       <SelectField label={kind === 'income' ? 'Llega a' : 'Se paga desde'} value={activeSource ?? ''} onChange={setSourceId} options={accountOptions} />
       {isCard && <FieldNote>Con tarjeta tu banco no cambia. Se aparta de tu Disponible real y, al registrarlo, sube la deuda de la tarjeta.</FieldNote>}
@@ -242,13 +267,21 @@ function RecurringPanel({ kind, data }: { kind: Kind; data: MoneyData }) {
   const [adding, setAdding] = useState(false)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
+  const formRef = useScrollIntoView(editing ?? (adding ? 'new' : null))
   const copy = COPY[kind]
   const editingItem = data.recurring.find((item) => item.uuid === editing)
   const today = new Date()
+  const paidOnce = new Set(
+    data.transactions.filter((tx) => tx.recurring_id && tx.occurrence).map((tx) => `${tx.recurring_id}|${tx.occurrence}`),
+  )
   const items = data.recurring
     .filter((item) => item.type === kind)
-    .map((item) => ({ item, next: nextOccurrences(item, today, 1)[0] }))
-    .sort((a, b) => (a.next?.getTime() ?? Infinity) - (b.next?.getTime() ?? Infinity))
+    .map((item) => {
+      const settled = item.frequency === 'once' && paidOnce.has(`${item.uuid}|${item.start_date}`)
+      const next = item.frequency === 'once' ? isoToDate(item.start_date) : nextOccurrences(item, today, 1)[0]
+      return { item, next, settled }
+    })
+    .sort((a, b) => Number(a.settled) - Number(b.settled) || (a.next?.getTime() ?? Infinity) - (b.next?.getTime() ?? Infinity))
 
   return (
     <Panel
@@ -261,12 +294,17 @@ function RecurringPanel({ kind, data }: { kind: Kind; data: MoneyData }) {
         )
       }
     >
-      {adding && <RecurringForm kind={kind} data={data} onDone={() => setAdding(false)} />}
-      {editingItem && <RecurringForm key={editingItem.uuid} kind={kind} data={data} item={editingItem} onDone={() => setEditing(null)} />}
+      {(adding || editingItem) && (
+        <div ref={formRef}>
+          {adding && <RecurringForm kind={kind} data={data} onDone={() => setAdding(false)} />}
+          {editingItem && <RecurringForm key={editingItem.uuid} kind={kind} data={data} item={editingItem} onDone={() => setEditing(null)} />}
+        </div>
+      )}
       {items.length === 0 ? (
         !adding && <FooterHint>{copy.empty}</FooterHint>
       ) : (
-        <table className="roster">
+        <div className="roster-fit">
+        <table className="roster roster-stack">
           <thead>
             <tr>
               <th scope="col">Nombre</th>
@@ -277,22 +315,24 @@ function RecurringPanel({ kind, data }: { kind: Kind; data: MoneyData }) {
             </tr>
           </thead>
           <tbody>
-            {items.map(({ item, next }) => (
+            {items.map(({ item, next, settled }) => (
               <tr key={item.uuid}>
-                <td>{item.name}</td>
-                <td className="dim">{repeatLabel(item)}</td>
-                <td className="mono dim">{next ? formatDate(next) : '—'}</td>
-                <td className="num mono">{item.amount === null ? '—' : money(item.amount)}</td>
-                <td className="num">
+                <td className="roster-title">{item.name}</td>
+                <td className="dim" data-label="Se repite">{repeatLabel(item)}</td>
+                <td className={`mono dim${item.frequency === 'once' && !settled && next && dateToIso(next) < todayIso() ? ' text-amber' : ''}`} data-label="Siguiente">
+                  {settled ? 'Pagada' : next ? formatDate(next) : '—'}
+                </td>
+                <td className="num mono" data-label="Monto">{item.amount === null ? '—' : money(item.amount)}</td>
+                <td className="row-actions">
                   {confirming === item.uuid ? (
-                    <>
+                    <span className="panel-verbs">
                       <button type="button" className="panel-verb text-heat" onClick={() => deleteRecurring(item, data.overrides)}>
                         Confirmar
-                      </button>{' '}
+                      </button>
                       <button type="button" className="panel-verb" onClick={() => setConfirming(null)}>
                         No
                       </button>
-                    </>
+                    </span>
                   ) : (
                     <span className="panel-verbs">
                       <button
@@ -315,6 +355,7 @@ function RecurringPanel({ kind, data }: { kind: Kind; data: MoneyData }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </Panel>
   )

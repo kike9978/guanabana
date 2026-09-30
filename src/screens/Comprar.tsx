@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { AmountField, ChoiceField, FieldError, FieldNote, RangeField, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, type Tone } from '../components/hud'
-import { newRecord, writeAcross } from '../db/db'
 import { selectable } from '../db/accounts'
-import type { ProjectionScenario } from '../db/types'
+import { addPlanItem } from '../db/plan'
+import type { PlanItem } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { useRecords } from '../db/useRecords'
 import { bucketsInLiquid } from '../lib/buckets'
 import { scheduledMonthlyIncome } from '../lib/budgets'
-import { isoToDate, todayIso } from '../lib/dates'
+import { todayIso } from '../lib/dates'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { roundMoney } from '../lib/money'
 import { MSI_TERMS } from '../lib/msi'
@@ -44,9 +44,9 @@ function toneClass(value: number): string {
   return value < 0 ? ' text-heat' : ''
 }
 
-export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }) {
+export function Comprar({ data, header, onAddedToPlan }: { data: MoneyData; header: ReactNode; onAddedToPlan?: () => void }) {
   const today = new Date()
-  const saved = useRecords<ProjectionScenario>('projection_scenarios') ?? []
+  const wishes = useRecords<PlanItem>('plan_items') ?? []
   const scheduledMonthly = scheduledMonthlyIncome(data.recurring)
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso())
@@ -83,35 +83,26 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
 
   async function save() {
     if (!ready || value === null) return setError('Escribe el monto y la fecha de la compra.')
-    const record = newRecord<ProjectionScenario>({
-      name: name.trim() || `Compra de ${money(value)}`,
-      amount: value,
-      date,
-      card_id: cardId || null,
-      msi_months: cardId && msiMonths !== MSI_NONE ? msiMonths : null,
-      income_monthly: scheduledMonthly > 0 ? incomeMonthly : null,
-      extra_expenses: extra,
-      daily_spend: dailySpend,
-    })
+    const label = name.trim() || `Compra de ${money(value)}`
     try {
-      await writeAcross([{ store: 'projection_scenarios', put: [record] }])
-      setSavedNote(`Guardado: ${record.name}.`)
+      await addPlanItem(wishes, {
+        name: label,
+        amount: value,
+        target_date: date,
+        enabled: true,
+        payment_method: cardId ? 'credit_card' : 'bank',
+        card_id: cardId || null,
+        msi_months: cardId && msiMonths !== MSI_NONE ? msiMonths : null,
+        category_id: null,
+        bucket_draws: [],
+        notes: '',
+      })
+      setSavedNote(`Agregado al plan: ${label}.`)
       setError(null)
+      onAddedToPlan?.()
     } catch {
       setError('No se pudo guardar. Intenta de nuevo.')
     }
-  }
-
-  function open(record: ProjectionScenario) {
-    setAmount(String(record.amount))
-    setDate(record.date)
-    setCardId(record.card_id && data.cards.some((c) => c.uuid === record.card_id) ? record.card_id : '')
-    setMsiMonths(record.msi_months ?? MSI_NONE)
-    setIncomeMonthly(record.income_monthly ?? scheduledMonthly)
-    setExtra(record.extra_expenses)
-    setDailySpend(record.daily_spend ?? 0)
-    setName(record.name)
-    setSavedNote(null)
   }
 
   return (
@@ -258,44 +249,18 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
         </Panel>
 
         {chosen && (
-          <Panel title="Guardar escenario">
+          <Panel title="Agregar al plan">
             <div className="form">
               <TextField label="Nombre" value={name} onChange={setName} placeholder={`Compra de ${money(value ?? 0)}`} />
               <div className="verb-row">
                 <button type="button" className="verb-button" onClick={() => void save()}>
                   <span className="key-glyph">S</span>
-                  Guardar escenario
+                  Agregar al plan
                 </button>
               </div>
               {savedNote && <FieldNote>{savedNote}</FieldNote>}
               {error && <FieldError>{error}</FieldError>}
             </div>
-          </Panel>
-        )}
-
-        {saved.length > 0 && (
-          <Panel title="Escenarios guardados">
-            <table className="roster">
-              <tbody>
-                {[...saved].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((record) => (
-                  <tr key={record.uuid}>
-                    <td>
-                      {record.name}
-                      <span className="row-sub">{formatDate(isoToDate(record.date))}</span>
-                    </td>
-                    <td className="num mono">{money(record.amount)}</td>
-                    <td className="num">
-                      <button type="button" className="panel-verb" onClick={() => open(record)}>
-                        Abrir
-                      </button>{' '}
-                      <button type="button" className="panel-verb" onClick={() => void writeAcross([{ store: 'projection_scenarios', delete: [record.uuid] }])}>
-                        Quitar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </Panel>
         )}
 

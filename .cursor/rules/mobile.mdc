@@ -1,0 +1,44 @@
+---
+description: Phone layout for Guanabana screens
+globs: src/**/*.{tsx,css}
+alwaysApply: false
+---
+
+# Phone layout
+
+Phone is the primary surface. A tap or a new form must show its result in the current view. Do not leave it below the rest of the screen.
+
+## Dossier
+
+Wide screens keep the dossier as a right column. Below 900px, a dossier that opens from a tap uses `dossier-sheet` and `useDossierSheet` (`src/components/mobile.ts`). Inicio and Tiempo stay inline: their dossier is always on screen.
+
+## Rosters
+
+Three short columns can stay a table. More columns, or a cell with Editar / Quitar, use `roster-fit` and `roster roster-stack`:
+
+- The identity cell is `roster-title` (no `data-label`).
+- Every other value cell has `data-label` with the column name.
+- Verbs sit in `row-actions` inside `panel-verbs`, on one line.
+
+```tsx
+<div className="roster-fit">
+  <table className="roster roster-stack">
+    <tr>
+      <td className="roster-title">{name}</td>
+      <td className="num mono" data-label="Monto">{money(amount)}</td>
+      <td className="row-actions">
+        <span className="panel-verbs">
+          <button type="button" className="panel-verb">Editar</button>
+          <button type="button" className="panel-verb">Quitar</button>
+        </span>
+      </td>
+    </tr>
+  </table>
+</div>
+```
+
+## Forms and row actions
+
+A form that opens from a row uses `useScrollIntoView` so it enters the stage. Actions for a selected movimiento use `verb-row verb-row-pin` so they sit above the command bar.
+
+Do not add a second sheet style, horizontal scrolling as the way to fit a table, or new card chrome.

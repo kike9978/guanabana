@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useDossierSheet } from '../components/mobile'
 import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, TextField } from '../components/fields'
 import { FooterHint, Panel, StatBar } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
@@ -530,7 +531,8 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
             </>
           )}
           {msiRows.length > 0 && (
-            <table className="roster">
+            <div className="roster-fit">
+            <table className="roster roster-stack">
               <thead>
                 <tr>
                   <th scope="col">Meses sin intereses</th>
@@ -541,16 +543,17 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
               <tbody>
                 {msiRows.map((row) => (
                   <tr key={row.tx.uuid}>
-                    <td>
+                    <td className="roster-title">
                       {row.concept}
                       <span className="row-sub">{`${row.posted} de ${row.charges.length} · ${money(row.tx.amount)}`}</span>
                     </td>
-                    <td className="num mono">{money(row.charges[0].amount)}</td>
-                    <td className="mono dim">{formatDate(row.charges[row.charges.length - 1].date)}</td>
+                    <td className="num mono" data-label="Mensualidad">{money(row.charges[0].amount)}</td>
+                    <td className="mono dim" data-label="Última">{formatDate(row.charges[row.charges.length - 1].date)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           <div className="verb-row">
             {!record.archived && (
@@ -592,6 +595,7 @@ export function Cuentas() {
   const data = useMoneyData()
   const [adding, setAdding] = useState<'account' | 'card' | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
+  const dossierRef = useDossierSheet(selection ? `${selection.kind}-${selection.uuid}` : null, () => setSelection(null))
   if (!data.loaded) return null
 
   const accounts = data.accounts
@@ -759,7 +763,7 @@ export function Cuentas() {
       </div>
 
       {selection && (
-        <aside className="dossier" aria-label="Detalle">
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label="Detalle">
           <Dossier key={`${selection.kind}-${selection.uuid}`} data={data} selection={selection} onClose={() => setSelection(null)} />
         </aside>
       )}

@@ -141,6 +141,62 @@ export function summarizeLoan(loan: Loan, installments: LoanInstallment[], trans
   }
 }
 
+export interface RowEdit {
+  due_date?: string
+  amount?: number | null
+}
+
+export type ScheduleProblem =
+  | { kind: 'missing' }
+  | { kind: 'below_principal'; principal: number }
+  | { kind: 'total'; principal: number; remaining: number }
+
+export interface ScheduleEdit {
+  rows: LoanInstallment[]
+  changed: LoanInstallment[]
+  problem: ScheduleProblem | null
+}
+
+/**
+ * Applies edits to the unpaid rows only. With an annual rate only dates change. Without interest the
+ * amount is all principal, so the open rows must still add up to what is left.
+ */
+export function editOpenRows(loan: Loan, open: LoanInstallment[], remaining: number, edits: Record<string, RowEdit>): ScheduleEdit {
+  let problem: ScheduleProblem | null = null
+  const rows = open.map((row) => {
+    const edit = edits[row.uuid]
+    if (!edit) return row
+    const next = { ...row, due_date: edit.due_date ?? row.due_date }
+    if (edit.amount === undefined || loan.interest === 'fixed_rate') return next
+    if (edit.amount === null || edit.amount <= 0) {
+      problem ??= { kind: 'missing' }
+      return next
+    }
+    if (loan.interest === 'none') return { ...next, amount: edit.amount, principal_part: edit.amount, interest_part: 0 }
+    if (edit.amount < row.principal_part) problem ??= { kind: 'below_principal', principal: row.principal_part }
+    return { ...next, amount: edit.amount, interest_part: roundMoney(Math.max(0, edit.amount - row.principal_part)) }
+  })
+  if (rows.some((row) => !row.due_date)) problem ??= { kind: 'missing' }
+  const principal = roundMoney(rows.reduce((sum, row) => sum + row.principal_part, 0))
+  if (!problem && Math.abs(principal - remaining) > 0.01) problem = { kind: 'total', principal, remaining }
+  const changed = rows.filter((row, index) => row.due_date !== open[index].due_date || row.amount !== open[index].amount)
+  return { rows, changed, problem }
+}
+
+/** A loan with no dates: only a balance that payments lower. Nothing is reserved and nothing shows on Tiempo. */
+export function isUnscheduled(loan: Pick<Loan, 'frequency'>): boolean {
+  return loan.frequency === 'unscheduled'
+}
+
+/** What is left on active loans in one direction. Lent money is shown, never counted as available. */
+export function outstanding(direction: Loan['direction'], loans: Loan[], installments: LoanInstallment[], transactions: Transaction[]): number {
+  return roundMoney(
+    loans
+      .filter((loan) => loan.direction === direction && loan.status === 'active')
+      .reduce((sum, loan) => sum + summarizeLoan(loan, installments, transactions).remaining, 0),
+  )
+}
+
 export type ExtraMode = 'shorten' | 'lower'
 
 export interface ExtraPlan {

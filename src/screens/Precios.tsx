@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useDossierSheet } from '../components/mobile'
 import { TextField } from '../components/fields'
 import { FooterHint, Panel, Rail, Series } from '../components/hud'
 import type { MoneyData } from '../db/useMoneyData'
@@ -108,7 +109,8 @@ function ItemDossier({ row, data, onClose }: { row: PriceRow; data: MoneyData; o
           </FooterHint>
         </>
       )}
-      <table className="roster">
+      <div className="roster-fit">
+      <table className="roster roster-stack">
         <thead>
           <tr>
             <th scope="col">Fecha</th>
@@ -124,20 +126,22 @@ function ItemDossier({ row, data, onClose }: { row: PriceRow; data: MoneyData; o
             .sort((a, b) => b.date.localeCompare(a.date))
             .map((line) => (
               <tr key={line.uuid}>
-                <td className="mono dim">{formatDate(isoToDate(line.date))}</td>
-                <td>{placeName(data.places.find((p) => p.uuid === line.place_id) ?? null)}</td>
-                <td className="num mono">{line.qty === null ? '—' : `${line.qty} ${line.unit}`}</td>
-                <td className="num mono">{formatAmount(line.line_total)}</td>
+                <td className="mono dim roster-title">{formatDate(isoToDate(line.date))}</td>
+                <td data-label="Lugar">{placeName(data.places.find((p) => p.uuid === line.place_id) ?? null)}</td>
+                <td className="num mono" data-label="Cant.">{line.qty === null ? '—' : `${line.qty} ${line.unit}`}</td>
+                <td className="num mono" data-label="Total">{formatAmount(line.line_total)}</td>
               </tr>
             ))}
         </tbody>
       </table>
+      </div>
     </Panel>
   )
 }
 
 export function Precios({ header, data }: { header: ReactNode; data: MoneyData }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const dossierRef = useDossierSheet(selected, () => setSelected(null))
   const [query, setQuery] = useState('')
   const roster = priceRoster(data.items, data.lines, data.places)
   const needle = normalizeName(query)
@@ -156,7 +160,8 @@ export function Precios({ header, data }: { header: ReactNode; data: MoneyData }
           <>
             {roster.length > 8 && <TextField label="Buscar producto" value={query} onChange={setQuery} placeholder="Ej. leche" />}
             <Panel>
-              <table className="roster">
+              <div className="roster-fit">
+              <table className="roster roster-stack">
                 <thead>
                   <tr>
                     <th scope="col">Producto</th>
@@ -182,24 +187,25 @@ export function Precios({ header, data }: { header: ReactNode; data: MoneyData }
                         if (event.key === 'Enter') setSelected(row.item.uuid === selected ? null : row.item.uuid)
                       }}
                     >
-                      <td>
+                      <td className="roster-title">
                         {row.item.name}
                         {row.count > 1 && <span className="row-sub">{row.count} compras</span>}
                       </td>
-                      <td className="num mono">{lastPriceLabel(row)}</td>
-                      <td className="dim">{placeName(row.place)}</td>
-                      <td className="mono dim">{formatDate(isoToDate(row.lastLine.date))}</td>
+                      <td className="num mono" data-label="Último precio">{lastPriceLabel(row)}</td>
+                      <td className="dim" data-label="Lugar">{placeName(row.place)}</td>
+                      <td className="mono dim" data-label="Fecha">{formatDate(isoToDate(row.lastLine.date))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              </div>
             </Panel>
             <FooterHint>Los precios se comparan por kg, por litro o por pieza. Toca un producto para ver su historial.</FooterHint>
           </>
         )}
       </div>
       {selectedRow && (
-        <aside className="dossier" aria-label={selectedRow.item.name}>
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label={selectedRow.item.name}>
           <ItemDossier key={selectedRow.item.uuid} row={selectedRow} data={data} onClose={() => setSelected(null)} />
         </aside>
       )}

@@ -53,8 +53,12 @@ export interface Transaction extends BaseRecord {
   loan_installment_id?: string | null
   loan_extra_id?: string | null
   bucket_id?: string | null
+  /** The money handed over when lending: an expense that is not spending. */
+  loan_id?: string | null
   /** Card expense split into interest-free monthly charges (meses sin intereses). */
   msi_months?: number | null
+  /** The wish this purchase fulfilled. */
+  plan_item_id?: string | null
 }
 
 export type BucketRule = 'emergency' | 'retirement' | 'travel'
@@ -89,9 +93,11 @@ export interface BucketMove extends BaseRecord {
   transfer_id?: string | null
   tx_id?: string | null
   reverses_id?: string | null
+  /** A later card payment that spends a wish's apartado. */
+  plan_item_id?: string | null
 }
 
-export type RepeatFrequency = 'monthly' | 'weekly'
+export type RepeatFrequency = 'monthly' | 'weekly' | 'once'
 
 export interface RecurringItem extends BaseRecord {
   name: string
@@ -99,14 +105,17 @@ export interface RecurringItem extends BaseRecord {
   amount: number | null
   /** Missing on rows saved before repeat rules: read as monthly, every 1. */
   frequency?: RepeatFrequency
-  /** Months (1, 2, 3, 6, 12) or weeks (1–4) between occurrences, counted from `start_date`. */
+  /** Months (1, 2, 3, 6, 12) or weeks (1–4) between occurrences, counted from `start_date`. Ignored when `once`. */
   interval?: number
-  /** Monthly only. Weekly items fall on the weekday of `start_date`. */
+  /** Monthly only. Weekly items fall on the weekday of `start_date`. A one-time bill stores the day of its due date. */
   due_day: number
   account_id: string | null
   cc_id?: string | null
   category_id: string | null
+  /** First date of the series. For `once`, the date the bill should be paid (fecha límite). */
   start_date: string
+  /** One-time bills only: the day the invoice was generated. The reserve starts then, not on the due date. */
+  issued_on?: string | null
   active: boolean
 }
 
@@ -119,7 +128,8 @@ export interface RecurringOverride extends BaseRecord {
 
 export type LoanDirection = 'borrowed' | 'lent'
 export type LoanInterest = 'none' | 'fixed_installment' | 'fixed_rate'
-export type LoanFrequency = 'monthly' | 'biweekly' | 'per_income'
+/** `unscheduled` has no installments: payments are abonos that lower the balance. */
+export type LoanFrequency = 'monthly' | 'biweekly' | 'per_income' | 'unscheduled'
 export type IncomeSlot = 'first' | 'second' | 'both'
 
 export interface Loan extends BaseRecord {
@@ -136,7 +146,8 @@ export interface Loan extends BaseRecord {
   first_due_date: string
   installment_count: number
   pay_from_account_id: string | null
-  status: 'active' | 'paid' | 'paused'
+  /** `written_off` is for lent money only: what was collected stays, the unpaid rows stop showing. */
+  status: 'active' | 'paid' | 'paused' | 'written_off'
 }
 
 export interface LoanInstallment extends BaseRecord {
@@ -219,10 +230,51 @@ export interface ProjectionScenario extends BaseRecord {
   daily_spend?: number
 }
 
+export interface BucketDraw {
+  bucket_id: string
+  amount: number
+}
+
+export type PlanPaymentMethod = 'bank' | 'cash' | 'credit_card'
+
+/** A wish on the plan. It projects only; the purchase is written by Ya lo compré. */
+export interface PlanItem extends BaseRecord {
+  name: string
+  amount: number
+  /** Null means “lo antes posible”. */
+  target_date: string | null
+  enabled: boolean
+  sort_order: number
+  payment_method: PlanPaymentMethod
+  card_id: string | null
+  msi_months: number | null
+  category_id: string | null
+  bucket_draws: BucketDraw[]
+  status: 'planned' | 'dropped'
+  /** The purchase that fulfilled it. The wish is bought while that movement exists. */
+  tx_id: string | null
+  notes: string
+  source: RecordSource
+}
+
+/** A contribution the plan assumes on each matching payday. Never a bucket move. */
+export interface PlannedContribution extends BaseRecord {
+  bucket_id: string
+  amount: number
+  income_slot: IncomeSlot
+  enabled: boolean
+}
+
+export interface PlanSettings {
+  include_rules: boolean
+  in_tiempo: boolean
+}
+
 export interface Settings extends BaseRecord {
   buffer_mxn: number
   cash_reviewed_at?: string | null
   rule_prompt_dismissed_at?: string | null
   first_income_rule: { target_bucket: 'emergency' }
   second_income_rule: { retirement_pct: number; travel_mxn: number }
+  plan?: PlanSettings
 }

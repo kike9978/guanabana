@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
-import { AdjustOccurrenceForm, adjustedNote, canAdjust } from '../components/AdjustOccurrenceForm'
+import { AdjustOccurrenceForm } from '../components/AdjustOccurrenceForm'
 import { FooterHint, Panel } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
+import { setPlanSettings } from '../db/plan'
+import type { PlanItem, PlannedContribution } from '../db/types'
 import { useMoneyData } from '../db/useMoneyData'
+import { useRecords } from '../db/useRecords'
 import { dateToIso } from '../lib/dates'
 import { formatCompact, formatDate, formatMoney, formatMonth } from '../lib/format'
+import { roundMoney } from '../lib/money'
+import { planDelta, projectPlan } from '../lib/plan'
 import { dailyProjection, habitualDailySpend } from '../lib/projection'
-import { groupByDay, timeline, type TimelineKind } from '../lib/timeline'
+import { adjustedNote, adjustLabel, canAdjust, groupByDay, timeline, type TimelineKind } from '../lib/timeline'
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
 
@@ -51,11 +56,22 @@ export function Tiempo({
   const dayEvents = events.get(day) ?? []
   const selectedDate = new Date(month.getFullYear(), month.getMonth(), day)
   const empty = data.loaded && data.cards.length === 0 && data.recurring.length === 0 && data.loans.length === 0
+  const wishes = useRecords<PlanItem>('plan_items') ?? []
+  const contributions = useRecords<PlannedContribution>('planned_contributions') ?? []
+  const showPlan = data.settings?.plan?.in_tiempo ?? false
   const dailySpend = habitualDailySpend(data.transactions, today).perDay
   const projection = data.loaded
     ? dailyProjection(data, today, month, new Date(month.getFullYear(), month.getMonth() + 1, 1), { dailySpend })
     : new Map<string, number>()
-  const projectedOn = (cell: number) => projection.get(dateToIso(new Date(month.getFullYear(), month.getMonth(), cell, 12)))
+  const plan = data.loaded && showPlan
+    ? projectPlan(data, today, { items: wishes, contributions, includeRules: data.settings?.plan?.include_rules ?? true, dailySpend })
+    : null
+  const onDate = (cell: number) => new Date(month.getFullYear(), month.getMonth(), cell, 12)
+  const projectedOn = (cell: number) => {
+    const base = projection.get(dateToIso(onDate(cell)))
+    if (base === undefined) return undefined
+    return plan ? roundMoney(base + planDelta(plan, onDate(cell))) : base
+  }
   const selectedProjection = projectedOn(day)
 
   function shift(delta: number) {
@@ -76,6 +92,17 @@ export function Tiempo({
             <span className="key-glyph">L</span>
             Préstamos
           </button>
+          {data.settings && (
+            <button
+              type="button"
+              className="verb-button"
+              role="switch"
+              aria-checked={showPlan}
+              onClick={() => void setPlanSettings(data.settings!, { in_tiempo: !showPlan })}
+            >
+              {showPlan ? 'Con plan' : 'Sin plan'}
+            </button>
+          )}
         </div>
         <Panel
           title={formatMonth(month)}
@@ -146,6 +173,7 @@ export function Tiempo({
             {dailySpend > 0
               ? `La cifra de cada día es tu Disponible real proyectado, con tus ingresos y pagos programados y tu gasto diario habitual (${formatMoney(dailySpend, 'MXN')}).`
               : 'La cifra de cada día es tu Disponible real proyectado, con tus ingresos y pagos programados.'}
+            {showPlan ? ' Con plan incluye tus deseos activos y lo que tus reglas apartarían.' : ''}
           </FooterHint>
         )}
       </div>
@@ -154,10 +182,18 @@ export function Tiempo({
         <Panel title={formatDate(selectedDate)}>
           {selectedProjection !== undefined && (
             <div className="readout">
-              <span className="dim">Disponible real proyectado</span>
+              <span className="dim">{showPlan ? 'Disponible real proyectado · con plan' : 'Disponible real proyectado'}</span>
               <span className={`mono${selectedProjection < 0 ? ' text-heat' : ''}`}>{formatMoney(selectedProjection, 'MXN')}</span>
             </div>
           )}
+          {plan?.items
+            .filter((row) => row.date && dateToIso(row.date) === dateToIso(selectedDate))
+            .map((row) => (
+              <div key={row.item.uuid} className="readout">
+                <span className="dim">Plan · {row.item.name}</span>
+                <span className="mono">{formatMoney(row.item.amount, 'MXN')}</span>
+              </div>
+            ))}
           {dayEvents.length === 0 ? (
             <FooterHint>Nada programado este día.</FooterHint>
           ) : (
@@ -184,7 +220,7 @@ export function Tiempo({
                         </button>
                         {canAdjust(event, today) && (
                           <button type="button" className="panel-verb" onClick={() => setAdjusting(event.key)}>
-                            Ajustar este pago
+                            {adjustLabel(event)}
                           </button>
                         )}
                       </span>

@@ -10,6 +10,7 @@ import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { isoToDate } from '../lib/dates'
 import { formatDate, formatMoney } from '../lib/format'
 import { categoryLabel, matchesCategory } from '../lib/categories'
+import { isSpending } from '../lib/ledger'
 import { isMsi } from '../lib/msi'
 import { inRange, rangeLabel, spendMethod, type ExpenseFocus, type StatsWindow } from '../lib/stats'
 import { Estadisticas } from './Estadisticas'
@@ -67,7 +68,7 @@ function matchesFilter(tx: Transaction, filter: MethodFilter, data: MoneyData): 
 }
 
 function matchesFocus(tx: Transaction, focus: ExpenseFocus, data: MoneyData, fallbackId: string | null): boolean {
-  if (tx.type !== 'expense' || !inRange(tx, focus.range)) return false
+  if (!isSpending(tx) || !inRange(tx, focus.range)) return false
   if (focus.categoryId) {
     const id = tx.category_id ?? fallbackId
     if (focus.exact ? id !== focus.categoryId : !matchesCategory(id, focus.categoryId, data.categories)) return false
@@ -125,7 +126,8 @@ function TransactionList({
         <Rail label="Método" items={FILTERS} active={filter} onSelect={setFilter} />
       )}
       <Panel>
-        <table className="roster">
+        <div className="roster-fit">
+        <table className="roster roster-stack">
           <thead>
             <tr>
               <th scope="col">Fecha</th>
@@ -157,13 +159,13 @@ function TransactionList({
                     setError(null)
                   }}
                 >
-                  <td className="mono dim">{formatDate(isoToDate(tx.date))}</td>
-                  <td>
+                  <td className="mono dim" data-label="Fecha">{formatDate(isoToDate(tx.date))}</td>
+                  <td className="roster-title">
                     {row.concept}
                     {sub && <span className="row-sub">{sub}</span>}
                   </td>
-                  <td className="dim">{row.source}</td>
-                  <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`}>
+                  <td className="dim" data-label="Método">{row.source}</td>
+                  <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`} data-label="Monto">
                     {row.signed === 0 ? formatMoney(tx.amount, tx.currency) : formatMoney(row.signed, tx.currency)}
                   </td>
                 </tr>
@@ -171,10 +173,11 @@ function TransactionList({
             })}
           </tbody>
         </table>
+        </div>
       </Panel>
 
       {selectedTx && (
-        <div className="verb-row">
+        <div className="verb-row verb-row-pin">
           {confirming ? (
             <>
               <button type="button" className="verb-button verb-danger" onClick={() => remove(selectedTx)}>
@@ -207,11 +210,13 @@ function TransactionList({
         {confirming
           ? selectedTx?.loan_extra_id
             ? 'Eliminar revierte el saldo y regresa el calendario anterior del préstamo.'
-            : selectedTx?.bucket_id || data.bucketMoves.some((move) => move.tx_id === selectedTx?.uuid)
-              ? selectedTx?.type === 'adjustment'
-                ? 'Eliminar revierte el ajuste y lo que se repartió en tus apartados.'
-                : 'Eliminar revierte la transferencia y los movimientos de su apartado.'
-              : 'Eliminar revierte el saldo de la cuenta o tarjeta.'
+            : selectedTx?.loan_id
+              ? 'Eliminar regresa el dinero prestado a su cuenta. El préstamo y sus cobros se quedan.'
+              : selectedTx?.bucket_id || data.bucketMoves.some((move) => move.tx_id === selectedTx?.uuid)
+                ? selectedTx?.type === 'adjustment'
+                  ? 'Eliminar revierte el ajuste y lo que se repartió en tus apartados.'
+                  : 'Eliminar revierte la transferencia y los movimientos de su apartado.'
+                : 'Eliminar revierte el saldo de la cuenta o tarjeta.'
           : rows.length === 0
             ? EMPTY_LIST
             : 'Toca un movimiento para ver acciones.'}

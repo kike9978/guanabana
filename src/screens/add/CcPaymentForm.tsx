@@ -3,7 +3,11 @@ import { AmountField, FieldError, FieldNote, FormActions, SelectField, TextField
 import { isLiquid, selectable } from '../../db/accounts'
 import { fundFromBucket } from '../../db/buckets'
 import { saveTransaction } from '../../db/ledger'
-import { bucketFundingOptions, type BucketFunding } from '../../lib/buckets'
+import { releaseCardDraw } from '../../db/plan'
+import type { PlanItem } from '../../db/types'
+import { useRecords } from '../../db/useRecords'
+import { bucketBalance, bucketFundingOptions, homeAccount, type BucketFunding } from '../../lib/buckets'
+import { cardDrawsLeft } from '../../lib/plan'
 import { roundMoney } from '../../lib/money'
 import { msiPendingByCard, payableBalance } from '../../lib/msi'
 import { nextPayment } from '../../lib/statement'
@@ -22,6 +26,8 @@ export function CcPaymentForm({ data, onDone, onOpenAccounts, prefill, editing }
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [fundingId, setFundingId] = useState<string | null>(null)
+  const [drawKey, setDrawKey] = useState<string | null>(null)
+  const wishes = useRecords<PlanItem>('plan_items') ?? []
 
   const cardOptions = selectable(data.cards, [prefill?.cc_id]).map((c) => ({
     value: c.uuid,
@@ -54,6 +60,30 @@ export function CcPaymentForm({ data, onDone, onOpenAccounts, prefill, editing }
   const shortBy = account && value !== null ? roundMoney(value - available) : 0
   const fundingOptions = account ? bucketFundingOptions(data.buckets, data.bucketMoves, data.accounts, account, shortBy) : []
   const funding = fundingOptions.find((option) => option.bucket.uuid === fundingId)
+  const draws = card && account
+    ? cardDrawsLeft(wishes, data.transactions, data.bucketMoves).flatMap((row) => {
+        if (row.cardId !== card.uuid) return []
+        const bucket = data.buckets.find((b) => b.uuid === row.bucketId && !b.archived)
+        if (!bucket) return []
+        const amount = roundMoney(Math.min(row.left, Math.max(0, bucketBalance(bucket, data.bucketMoves))))
+        return amount > 0 ? [{ ...row, bucket, amount }] : []
+      })
+    : []
+  const pendingDraw = draws.find((row) => `${row.item.uuid}:${row.bucketId}` === drawKey)
+
+  async function releaseDraw() {
+    if (!pendingDraw || !account) return
+    setSaving(true)
+    setError(null)
+    try {
+      await releaseCardDraw(pendingDraw.item, pendingDraw.bucket, pendingDraw.amount, data.accounts, data.bucketMoves, account)
+      setAmount(String(pendingDraw.amount))
+      setDrawKey(null)
+    } catch {
+      setError('No se pudo usar el apartado. Intenta de nuevo.')
+    }
+    setSaving(false)
+  }
 
   async function fund(option: BucketFunding) {
     if (!account) return
@@ -115,6 +145,32 @@ export function CcPaymentForm({ data, onDone, onOpenAccounts, prefill, editing }
         <FieldNote>
           {`${formatMoney(roundMoney(card.current_balance - payable), 'MXN')} son mensualidades a meses que aún no llegan. Pagarlas antes es opcional.`}
         </FieldNote>
+      )}
+      {draws.length > 0 && !pendingDraw && (
+        <div className="verb-row">
+          {draws.map((row) => (
+            <button key={`${row.item.uuid}:${row.bucketId}`} type="button" className="verb-button" onClick={() => setDrawKey(`${row.item.uuid}:${row.bucketId}`)}>
+              Pagar con {row.bucket.name} · <span className="mono">{formatMoney(row.amount, 'MXN')}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {pendingDraw && account && (
+        <>
+          <FieldNote>
+            {homeAccount(pendingDraw.bucket, data.accounts)
+              ? `Se transfieren ${formatMoney(pendingDraw.amount, 'MXN')} de ${homeAccount(pendingDraw.bucket, data.accounts)!.name} a ${account.name} y se retiran de ${pendingDraw.bucket.name}. Tu Disponible real sube. El pago de la tarjeta lo guardas después.`
+              : `Se retiran ${formatMoney(pendingDraw.amount, 'MXN')} de ${pendingDraw.bucket.name}. Tu Disponible real sube, porque dejas de apartarlos. El pago de la tarjeta lo guardas después.`}
+          </FieldNote>
+          <div className="verb-row">
+            <button type="button" className="verb-button verb-primary" disabled={saving} onClick={() => void releaseDraw()}>
+              Confirmar
+            </button>
+            <button type="button" className="verb-button" onClick={() => setDrawKey(null)}>
+              Cancelar
+            </button>
+          </div>
+        </>
       )}
       {activeAccount && <SelectField label="Desde" value={activeAccount} onChange={setAccountId} options={accountOptions} />}
       <TextField label="Fecha" type="date" value={date} onChange={setDate} mono />

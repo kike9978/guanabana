@@ -16,6 +16,7 @@ export const ADD_TYPES = [
   { id: 'transfer', label: 'Transferencia', key: 'T' },
   { id: 'cc_payment', label: 'Pago TDC', key: 'P' },
   { id: 'savings_rule', label: 'Regla de ahorro', key: 'R' },
+  { id: 'loan', label: 'Préstamo', key: 'L' },
 ] as const
 
 export type AddType = (typeof ADD_TYPES)[number]['id']
@@ -30,6 +31,7 @@ export type MovementView = (typeof MOVEMENT_VIEWS)[number]['id']
 
 export const PROJECTION_VIEWS = [
   { id: 'buy', label: '¿Puedo comprarlo?' },
+  { id: 'plan', label: 'Plan' },
   { id: 'budget', label: 'Presupuesto' },
 ] as const
 

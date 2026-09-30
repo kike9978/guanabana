@@ -22,7 +22,8 @@ const TONE_CLASS: Record<Tone, string> = { safe: '', tight: ' text-amber', short
 
 export function SeriesTable({ series }: { series: TimelinePoint[] }) {
   return (
-    <table className="roster requirements">
+    <div className="roster-fit">
+    <table className="roster roster-stack requirements">
       <thead>
         <tr>
           <th scope="col">Ingreso</th>
@@ -33,19 +34,20 @@ export function SeriesTable({ series }: { series: TimelinePoint[] }) {
       <tbody>
         {series.map((point, index) => (
           <tr key={point.date.getTime()}>
-            <td className="mono wrap">
+            <td className="mono wrap roster-title">
               {formatDate(point.date)}
               <span className="row-sub">
                 {index === 0 ? 'Hoy' : point.freed > 0 ? `Cuota liberada +${formatCompact(point.freed)}` : ''}
                 {point.payoffs.length > 0 && `${index === 0 ? ' · ' : ''}Termina ${point.payoffs.join(', ')}`}
               </span>
             </td>
-            <td className="num mono">{point.installments > 0 ? money(point.installments) : '—'}</td>
-            <td className={`num mono${TONE_CLASS[pointTone(point)]}`}>{money(point.available)}</td>
+            <td className="num mono" data-label="Cuotas">{point.installments > 0 ? money(point.installments) : '—'}</td>
+            <td className={`num mono${TONE_CLASS[pointTone(point)]}`} data-label="Disponible real">{money(point.available)}</td>
           </tr>
         ))}
       </tbody>
     </table>
+    </div>
   )
 }
 

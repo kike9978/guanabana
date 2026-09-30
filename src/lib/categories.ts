@@ -3,6 +3,9 @@ import { roundMoney } from './money'
 
 export const UNCATEGORIZED_KEY = 'uncategorized'
 
+/** Money handed over when lending. Written only with its loan, so it stays out of the pickers. */
+export const DISBURSEMENT_KEY = 'loan_disbursement'
+
 const INDENT = '\u00a0\u00a0\u00a0· '
 
 export function isTopLevel(category: Category): boolean {
@@ -10,7 +13,7 @@ export function isTopLevel(category: Category): boolean {
 }
 
 export function canHaveChildren(category: Category): boolean {
-  return isTopLevel(category) && category.key !== UNCATEGORIZED_KEY
+  return isTopLevel(category) && category.key !== UNCATEGORIZED_KEY && category.key !== DISBURSEMENT_KEY
 }
 
 /** The top-level category an id rolls up to: itself, or its parent. */
@@ -33,7 +36,7 @@ export function categoryLabel(id: string | null | undefined, categories: Categor
 
 /** Top-level categories of a kind, each followed by its active subcategories, indented. */
 export function categoryOptions(categories: Category[], kind: CategoryKind, keep: (string | null | undefined)[] = []): { value: string; label: string }[] {
-  const kept = (c: Category) => !c.archived || keep.includes(c.uuid)
+  const kept = (c: Category) => (!c.archived && c.key !== DISBURSEMENT_KEY) || keep.includes(c.uuid)
   return categories
     .filter((c) => c.kind === kind && isTopLevel(c) && kept(c))
     .flatMap((parent) => [

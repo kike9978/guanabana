@@ -2,6 +2,7 @@ import type { Account, CreditCard, Transaction } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { incomeCycle, loanCommitments } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
+import { isSpending } from './ledger'
 import { roundMoney } from './money'
 import { msiUnbilled } from './msi'
 import { moneySnapshot } from './snapshot'
@@ -28,11 +29,13 @@ function addDays(date: Date, days: number): Date {
 
 function scaleIncome(data: MoneyData, factor: number): MoneyData {
   if (factor === 1) return data
+  const income = new Set(data.recurring.filter((item) => item.type === 'income').map((item) => item.uuid))
   return {
     ...data,
     recurring: data.recurring.map((item) =>
       item.type === 'income' && item.amount !== null ? { ...item, amount: roundMoney(item.amount * factor) } : item,
     ),
+    overrides: data.overrides.map((row) => (income.has(row.recurring_id) ? { ...row, amount: roundMoney(row.amount * factor) } : row)),
   }
 }
 
@@ -56,7 +59,7 @@ export function habitualDailySpend(transactions: Transaction[], today: Date): { 
   const first = transactions.reduce((min, tx) => (tx.date < min ? tx.date : min), end)
   const days = Math.min(HABIT_WINDOW_DAYS, Math.max(HABIT_MIN_DAYS, daysBetween(isoToDate(first), today) + 1))
   const total = transactions
-    .filter((tx) => tx.type === 'expense' && !tx.recurring_id && !tx.loan_installment_id && tx.date >= start && tx.date <= end)
+    .filter((tx) => isSpending(tx) && !tx.recurring_id && !tx.loan_installment_id && tx.date >= start && tx.date <= end)
     .reduce((sum, tx) => sum + tx.amount, 0)
   return { perDay: roundMoney(Math.max(0, total) / days), days }
 }

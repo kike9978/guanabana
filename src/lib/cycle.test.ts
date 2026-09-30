@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
 import { scheduledMonthlyIncome } from './budgets'
-import { billCommitments, incomeCycle, itemOccurrences, loanCommitments, nextOccurrences } from './cycle'
+import { billCommitments, incomeCycle, invoiceCommitments, itemOccurrences, loanCommitments, nextOccurrences } from './cycle'
 import { dateToIso } from './dates'
 import { incomeRank } from './incomeRules'
 import { buildSchedule, summarizeLoan } from './loans'
@@ -70,6 +70,22 @@ describe('billCommitments', () => {
     expect(billCommitments([variable], [], cycle, today)).toEqual([])
     const adjusted = [{ ...base, uuid: 'o', recurring_id: 'r', occurrence: '2026-10-01', amount: 1340 }]
     expect(billCommitments([variable], [], cycle, today, adjusted).map((c) => c.amount)).toEqual([1340])
+  })
+
+  test('a one-time bill reserves from the day it was generated, not only before the next income', () => {
+    const invoice = recurring({ frequency: 'once', issued_on: '2026-09-29', start_date: '2026-11-17', due_day: 17, amount: 4000 })
+    expect(billCommitments([invoice], [], cycle, today)).toEqual([])
+    expect(invoiceCommitments([invoice], [], today).map((item) => [item.occurrence, item.amount, item.overdue])).toEqual([['2026-11-17', 4000, false]])
+    expect(invoiceCommitments([invoice], [], new Date(2026, 10, 20, 12))[0].overdue).toBe(true)
+  })
+
+  test('a one-time bill does not reserve before it is generated, and stops once it is paid', () => {
+    const invoice = recurring({ frequency: 'once', issued_on: '2026-11-01', start_date: '2026-11-17', due_day: 17, amount: 4000 })
+    expect(invoiceCommitments([invoice], [], today)).toEqual([])
+    const paid = { recurring_id: 'r', occurrence: '2026-11-17' } as Transaction
+    expect(invoiceCommitments([{ ...invoice, issued_on: '2026-09-29' }], [paid], today)).toEqual([])
+    expect(itemOccurrences(invoice, today, new Date(2026, 11, 1, 12)).map(dateToIso)).toEqual(['2026-11-17'])
+    expect(nextOccurrences(invoice, today, 1).map(dateToIso)).toEqual(['2026-11-17'])
   })
 
   test('an unpaid bill earlier in the cycle stays reserved as overdue', () => {
@@ -149,6 +165,7 @@ describe('repeat rules', () => {
     expect(repeatLabel(recurring({ due_day: 15 }))).toBe('Día 15 de cada mes')
     expect(repeatLabel(recurring({ due_day: 31 }))).toBe('Último día de cada mes')
     expect(repeatLabel(recurring({ frequency: 'monthly', interval: 2, due_day: 10, start_date: '2026-10-10' }))).toBe('Cada 2 meses · día 10')
+    expect(repeatLabel(recurring({ frequency: 'once', issued_on: '2026-09-30', start_date: '2026-11-17', due_day: 17 }))).toBe('Una vez · generado 30 sep')
     expect(iso(startChoices('w2', 5, 1, new Date(2026, 8, 30, 12)))).toEqual(['2026-10-02', '2026-10-09'])
     expect(iso(startChoices('m2', 0, 10, new Date(2026, 8, 30, 12)))).toEqual(['2026-10-10', '2026-11-10'])
   })

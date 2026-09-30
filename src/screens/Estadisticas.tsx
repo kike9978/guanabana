@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useDossierSheet } from '../components/mobile'
 import { FooterHint, Panel, Rail, Series, StatBar } from '../components/hud'
 import { UNCATEGORIZED_KEY } from '../db/seed'
 import type { MoneyData } from '../db/useMoneyData'
@@ -98,6 +99,7 @@ export function Estadisticas({
   onFocus: (focus: ExpenseFocus) => void
 }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const dossierRef = useDossierSheet(selected, () => setSelected(null))
   const today = new Date()
   const ranges = windowRanges(span, data.recurring, today)
   const fallbackId = data.categories.find((c) => c.key === UNCATEGORIZED_KEY)?.uuid ?? null
@@ -195,7 +197,7 @@ export function Estadisticas({
         )}
       </div>
       {selectedRow && (
-        <aside className="dossier" aria-label={selectedRow.category.name}>
+        <aside ref={dossierRef} className="dossier dossier-sheet" tabIndex={-1} aria-label={selectedRow.category.name}>
           <SubcategoryDossier row={selectedRow} range={ranges.current} onFocus={onFocus} onClose={() => setSelected(null)} />
         </aside>
       )}

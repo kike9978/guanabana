@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel, Rail, StatBar } from '../components/hud'
-import { AdjustOccurrenceForm, adjustedNote, canAdjust } from '../components/AdjustOccurrenceForm'
+import { AdjustOccurrenceForm } from '../components/AdjustOccurrenceForm'
 import { OpeningBalancePanel } from '../components/OpeningBalancePanel'
 import { StageHeader } from '../components/StageHeader'
 import { findOpeningAccount, isLiquid } from '../db/accounts'
@@ -15,12 +15,12 @@ import { pendingRuleIncomes, RULE_LABEL, type PendingRule } from '../lib/incomeR
 import { cashReviewDue, type CashReview } from '../lib/reconcile'
 import { ReconcileForm } from './Cuentas'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
-import { summarizeLoan } from '../lib/loans'
+import { outstanding } from '../lib/loans'
 import { roundMoney } from '../lib/money'
 import { realAvailableTone } from '../lib/realAvailable'
 import { moneySnapshot } from '../lib/snapshot'
 import { nextPayments, paymentLabel } from '../lib/statement'
-import { timeline, type TimelineEvent } from '../lib/timeline'
+import { adjustedNote, adjustLabel, canAdjust, timeline, type TimelineEvent } from '../lib/timeline'
 
 const UPCOMING_DAYS = 14
 
@@ -189,6 +189,7 @@ export function Inicio({
       show: true,
     },
     { label: '− Pagos antes del próximo ingreso', value: breakdown.billsBeforeNextIncome, show: true },
+    { label: '− Facturas por pagar', value: breakdown.invoicesOutstanding, show: breakdown.invoicesOutstanding !== 0 },
     { label: '− Cuotas de préstamos antes del próximo ingreso', value: breakdown.loanInstallmentsBeforeNextIncome, show: true },
     { label: '− Apartados en banco y efectivo', value: breakdown.bucketsInLiquid, show: true },
     { label: '− Colchón', value: breakdown.buffer, show: true },
@@ -202,7 +203,8 @@ export function Inicio({
   const cardDebt = roundMoney(cards.reduce((sum, c) => sum + c.current_balance, 0))
   const bucketTotal = roundMoney(data.buckets.reduce((sum, bucket) => sum + Math.max(0, bucketBalance(bucket, data.bucketMoves)), 0))
   const borrowed = data.loans.filter((loan) => loan.direction === 'borrowed' && loan.status === 'active')
-  const loanDebt = roundMoney(borrowed.reduce((sum, loan) => sum + summarizeLoan(loan, data.installments, data.transactions).remaining, 0))
+  const loanDebt = outstanding('borrowed', data.loans, data.installments, data.transactions)
+  const owedToMe = outstanding('lent', data.loans, data.installments, data.transactions)
 
   const chips = [
     { id: 'bank', label: 'Banco', value: accounts.some((a) => a.type === 'checking') ? money(sumType(accounts, 'checking')) : '—' },
@@ -210,6 +212,7 @@ export function Inicio({
     ...(breakdown.unassigned !== 0 ? [{ id: 'unassigned', label: 'Sin origen', value: money(breakdown.unassigned) }] : []),
     { id: 'card', label: 'TDC', value: cards.length > 0 ? money(cardDebt) : '—' },
     { id: 'loans', label: 'Préstamos', value: borrowed.length > 0 ? money(loanDebt) : '—' },
+    ...(owedToMe > 0 ? [{ id: 'owed', label: 'Te deben', value: money(owedToMe) }] : []),
     {
       id: 'savings',
       label: 'Ahorro',
@@ -221,7 +224,7 @@ export function Inicio({
     <div className="stage-grid">
       <div className="stage-main">
         <StageHeader title="¿Cuánto tengo de verdad?" share />
-        <Rail label="Cuentas" items={chips} onSelect={(id) => onOpenScreen(id === 'loans' ? 'loans' : 'accounts')} />
+        <Rail label="Cuentas" items={chips} onSelect={(id) => onOpenScreen(id === 'loans' || id === 'owed' ? 'loans' : 'accounts')} />
         <div className="verb-row">
           <button type="button" className="verb-button" onClick={() => onAdd('expense')}>
             <span className="key-glyph">G</span>
@@ -292,7 +295,7 @@ export function Inicio({
                   {canAdjust(selectedEvent, today) && (
                     <button type="button" className="verb-button" onClick={() => setAdjusting(selectedEvent.key)}>
                       <span className="key-glyph">J</span>
-                      Ajustar este pago
+                      {adjustLabel(selectedEvent)}
                     </button>
                   )}
                 </div>
@@ -377,6 +380,12 @@ export function Inicio({
             <span>= Seguro para gastar</span>
             <span className="mono">{money(breakdown.total)}</span>
           </div>
+          {owedToMe > 0 && (
+            <button type="button" className="readout readout-link" onClick={() => onOpenScreen('loans')}>
+              <span className="dim">Te deben · no cuenta hasta cobrarlo</span>
+              <span className="mono dim">{money(owedToMe)}</span>
+            </button>
+          )}
         </Panel>
         <FooterHint>
           {!hasMoneyData

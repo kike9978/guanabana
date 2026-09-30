@@ -6,6 +6,11 @@ export interface BalanceEffect {
   delta: number
 }
 
+/** Spending is `expense` rows, minus money handed over as a loan: that is a receivable, not a purchase. */
+export function isSpending(tx: Transaction): boolean {
+  return tx.type === 'expense' && !tx.loan_id
+}
+
 function required(id: string | null, field: string): string {
   if (!id) throw new Error(`Transaction is missing ${field}`)
   return id

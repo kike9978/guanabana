@@ -79,7 +79,17 @@ describe('timeline', () => {
     const [event] = timeline(data([], [override]), ...october)
     expect(event.amount).toBe(9100)
     expect(event.action?.prefill.amount).toBe(9100)
-    expect(event.bill?.override).toBe(override)
+    expect(event.recurring?.override).toBe(override)
+  })
+
+  test('an adjusted income shows and prefills its own amount, even without a usual amount', () => {
+    const pay: RecurringItem = { ...rent, uuid: 'pay', name: 'Freelance', type: 'income', amount: null, due_day: 20 }
+    const override: RecurringOverride = { ...base, uuid: 'o', recurring_id: 'pay', occurrence: '2026-10-20', amount: 18500 }
+    const events = timeline({ ...data([], [override]), recurring: [pay] }, ...october).filter((e) => e.kind === 'income')
+    expect(events).toHaveLength(1)
+    expect(events[0].amount).toBe(18500)
+    expect(events[0].action).toMatchObject({ type: 'income', prefill: { amount: 18500, recurring_id: 'pay', occurrence: '2026-10-20' } })
+    expect(events[0].recurring?.override).toBe(override)
   })
 
   test('the end date is exclusive', () => {
