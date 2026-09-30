@@ -5,12 +5,15 @@ import type {
   Budget,
   Category,
   CreditCard,
+  Item,
   Loan,
   LoanInstallment,
+  Place,
   RecurringItem,
   SavingsBucket,
   Settings,
   Transaction,
+  TransactionLine,
 } from './types'
 import { useRecords } from './useRecords'
 
@@ -33,6 +36,9 @@ export interface MoneyData {
   bucketMoves: BucketMove[]
   budgets: Budget[]
   settings: Settings | undefined
+  lines: TransactionLine[]
+  items: Item[]
+  places: Place[]
 }
 
 export function useMoneyData(): MoneyData {
@@ -47,11 +53,17 @@ export function useMoneyData(): MoneyData {
   const bucketMoves = useRecords<BucketMove>('bucket_moves')
   const budgets = useRecords<Budget>('budgets')
   const settings = useRecords<Settings>('settings')
+  const lines = useRecords<TransactionLine>('transaction_lines')
+  const items = useRecords<Item>('items')
+  const places = useRecords<Place>('places')
 
   return {
-    loaded: [accounts, cards, categories, transactions, recurring, loans, installments, buckets, bucketMoves, budgets, settings].every(
+    loaded: [accounts, cards, categories, transactions, recurring, loans, installments, buckets, bucketMoves, budgets, settings, lines, items, places].every(
       (rows) => rows !== null,
     ),
+    lines: lines ?? [],
+    items: [...(items ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'es')),
+    places: [...(places ?? [])].sort((a, b) => a.name.localeCompare(b.name, 'es')),
     accounts: accounts ?? [],
     cards: cards ?? [],
     categories: [...(categories ?? [])].sort(

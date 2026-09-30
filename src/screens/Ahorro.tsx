@@ -7,16 +7,20 @@ import { ACCOUNT_TYPE_LABEL, selectable } from '../db/accounts'
 import {
   BUCKET_SOURCE_LABEL,
   createBucket,
+  fijarSaldo,
   isSystemBucket,
   moveToBucket,
+  recognizeOpening,
   setBucketArchived,
   swapBucketOrder,
   transferBetweenBuckets,
+  undoOpeningWithdrawal,
   updateBucket,
+  withdrawFromBucket,
 } from '../db/buckets'
 import type { IncomeShare, SavingsBucket } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
-import { bucketBalance, bucketHistory, isHeldInLiquid, setAsideThisCycle, targetPace } from '../lib/buckets'
+import { bucketBalance, bucketHistory, fijarGap, isHeldInLiquid, openingBalance, reservedBalance, setAsideThisCycle, targetPace, withdrawSplit } from '../lib/buckets'
 import { isoToDate } from '../lib/dates'
 import { incomeRank, isRuleIncome, ruleMoves, type IncomeRule } from '../lib/incomeRules'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
@@ -24,7 +28,7 @@ import { roundMoney } from '../lib/money'
 import { parseAmount } from '../lib/parseAmount'
 import { moneySnapshot } from '../lib/snapshot'
 
-type Mode = 'view' | 'add' | 'withdraw' | 'transfer' | 'setup'
+type Mode = 'view' | 'add' | 'withdraw' | 'transfer' | 'setup' | 'fijar' | 'recognize'
 
 const NEW_BUCKET = 'new'
 
@@ -45,11 +49,14 @@ function MoveForm({ bucket, data, direction, onDone }: { bucket: SavingsBucket; 
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const balance = bucketBalance(bucket, data.bucketMoves)
+  const reserved = reservedBalance(bucket, data.bucketMoves)
   const liquid = isHeldInLiquid(bucket, data.accounts)
   const available = moneySnapshot(data, new Date()).breakdown.total
   const value = parseAmount(amount)
-  const after = value !== null && liquid ? roundMoney(available - direction * value) : available
   const adding = direction === 1
+  const split = !adding && value !== null ? withdrawSplit(reserved, value) : null
+  const released = split && liquid ? split.fromReserved : 0
+  const after = value === null ? available : adding && liquid ? roundMoney(available - value) : roundMoney(available + released)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -58,7 +65,8 @@ function MoveForm({ bucket, data, direction, onDone }: { bucket: SavingsBucket; 
     if (!adding && !reason.trim()) return setError('Escribe para qué lo usas. Queda en el historial.')
     setSaving(true)
     try {
-      await moveToBucket(bucket, { amount: direction * value, reason: reason.trim() || 'Apartado manual' })
+      if (adding) await moveToBucket(bucket, { amount: value, reason: reason.trim() || 'Apartado manual' })
+      else if (split) await withdrawFromBucket(bucket, { ...split, reason: reason.trim() })
       onDone()
     } catch {
       setError('No se pudo guardar. Intenta de nuevo.')
@@ -85,7 +93,11 @@ function MoveForm({ bucket, data, direction, onDone }: { bucket: SavingsBucket; 
           ? 'Este apartado está en una cuenta de ahorro, así que no cambia tu Disponible real.'
           : adding
             ? 'Apartar no mueve dinero de tu banco. Lo reserva para este fin.'
-            : 'Retirar libera el dinero para gastarlo. Tu banco no cambia.'}
+            : split && split.fromOpening > 0 && split.fromReserved === 0
+              ? 'Este dinero no está en tus cuentas. Retirarlo no cambia tu Disponible real.'
+              : split && split.fromOpening > 0
+                ? `${money(split.fromReserved)} sale de lo reservado y libera Disponible real. ${money(split.fromOpening)} no estaba en tus cuentas y no lo cambia.`
+                : 'Retirar libera el dinero para gastarlo. Tu banco no cambia.'}
       </FieldNote>
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel={adding ? 'Apartar' : 'Retirar'} saving={saving} onCancel={onDone} />
@@ -199,7 +211,8 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const balance = bucketBalance(bucket, data.bucketMoves)
+  const balance = reservedBalance(bucket, data.bucketMoves)
+  const opening = openingBalance(bucket.uuid, data.bucketMoves)
   const to = others.find((b) => b.uuid === toId)
   const value = parseAmount(amount)
   const fromLiquid = isHeldInLiquid(bucket, data.accounts)
@@ -210,7 +223,7 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
     event.preventDefault()
     if (!to) return setError('Elige a qué apartado lo mueves.')
     if (value === null || value <= 0) return setError('Escribe un monto mayor a cero.')
-    if (value > balance) return setError(`El apartado tiene ${money(balance)}.`)
+    if (value > balance) return setError(opening > 0 ? `Puedes mover ${money(balance)}. El resto no está en tus cuentas.` : `El apartado tiene ${money(balance)}.`)
     setSaving(true)
     try {
       await transferBetweenBuckets(bucket, to, value, reason.trim() || `De ${bucket.name} a ${to.name}`)
@@ -230,9 +243,103 @@ function TransferForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: M
         <span className="dim">Cambio en Disponible real</span>
         <span className="mono">{`${impact > 0 ? '+' : ''}${money(impact)}`}</span>
       </div>
-      <FieldNote>Mover entre apartados no cambia tu banco. Se guarda como dos movimientos en el historial.</FieldNote>
+      <FieldNote>
+        Mover entre apartados no cambia tu banco. Se guarda como dos movimientos en el historial.
+        {opening > 0 ? ` ${money(opening)} no están en tus cuentas; para moverlos, márcalos con Ya está en mi banco.` : ''}
+      </FieldNote>
       {error && <FieldError>{error}</FieldError>}
       <FormActions submitLabel="Mover" saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function FijarForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: MoneyData; onDone: () => void }) {
+  const balance = bucketBalance(bucket, data.bucketMoves)
+  const reserved = reservedBalance(bucket, data.bucketMoves)
+  const [total, setTotal] = useState(String(balance))
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const value = parseAmount(total)
+  const gap = value === null ? null : fijarGap(balance, reserved, value)
+  const available = moneySnapshot(data, new Date()).breakdown.total
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (value === null || value < 0) return setError('Escribe el saldo del apartado.')
+    if (!gap || 'error' in gap) return setError(`Ya hay ${money(reserved)} reservados desde tus cuentas. Para bajar de eso, usa Retirar.`)
+    setSaving(true)
+    try {
+      await fijarSaldo(bucket, gap.gap)
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <AmountField label="Saldo del apartado (MXN)" value={total} onChange={(v) => { setTotal(v); setError(null) }} invalid={error !== null} autoFocus />
+      <div className="stat-list">
+        <div className="readout">
+          <span className="dim">Apartado ahora</span>
+          <span className="mono">{money(balance)}</span>
+        </div>
+        <div className="readout">
+          <span className="dim">Saldo que fijas</span>
+          <span className="mono">{value === null ? '—' : money(value)}</span>
+        </div>
+        <div className="readout">
+          <span className="dim">Disponible real</span>
+          <span className="mono">{money(available)}</span>
+        </div>
+      </div>
+      <FieldNote>Este dinero no está en tus cuentas. No cambia tu banco ni tu Disponible real.</FieldNote>
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Fijar saldo" saving={saving} onCancel={onDone} />
+    </form>
+  )
+}
+
+function RecognizeForm({ bucket, data, onDone }: { bucket: SavingsBucket; data: MoneyData; onDone: () => void }) {
+  const opening = openingBalance(bucket.uuid, data.bucketMoves)
+  const liquid = isHeldInLiquid(bucket, data.accounts)
+  const available = moneySnapshot(data, new Date()).breakdown.total
+  const after = liquid ? roundMoney(available - opening) : available
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await recognizeOpening(bucket, opening)
+      onDone()
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form" onSubmit={submit} noValidate>
+      <div className="stat-list">
+        <div className="readout">
+          <span className="dim">Disponible real ahora</span>
+          <span className="mono">{money(available)}</span>
+        </div>
+        <div className="dossier-total">
+          <span>Disponible real después</span>
+          <span className={`mono${after < 0 ? ' text-heat' : ''}`}>{money(after)}</span>
+        </div>
+      </div>
+      <FieldNote>
+        {liquid
+          ? `${money(opening)} pasan a estar reservados desde tus cuentas, así que tu Disponible real baja. Tu banco no cambia.`
+          : `${money(opening)} pasan a la reserva de este apartado. Está en una cuenta de ahorro, así que tu Disponible real no cambia.`}
+      </FieldNote>
+      {error && <FieldError>{error}</FieldError>}
+      <FormActions submitLabel="Ya está en mi banco" saving={saving} onCancel={onDone} />
     </form>
   )
 }
@@ -241,7 +348,10 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
   const [mode, setMode] = useState<Mode>('view')
   const [error, setError] = useState<string | null>(null)
   const balance = bucketBalance(bucket, data.bucketMoves)
+  const reserved = reservedBalance(bucket, data.bucketMoves)
+  const opening = openingBalance(bucket.uuid, data.bucketMoves)
   const history = bucketHistory(bucket, data.bucketMoves)
+  const reversed = new Set(data.bucketMoves.flatMap((move) => (move.reverses_id ? [move.reverses_id] : [])))
   const account = data.accounts.find((a) => a.uuid === bucket.account_id)
   const pace = targetPace(bucket, balance, data.recurring, new Date())
   const cycleSetAside = setAsideThisCycle(bucket, data.bucketMoves, data.recurring, new Date())
@@ -328,6 +438,18 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
             </FieldNote>
           </>
         )}
+        {opening > 0 && (
+          <>
+            <div className="readout">
+              <span className="dim">Reservado de tus cuentas</span>
+              <span className="mono">{money(reserved)}</span>
+            </div>
+            <div className="readout">
+              <span className="dim">Saldo ya apartado · no está en tus cuentas</span>
+              <span className="mono">{money(opening)}</span>
+            </div>
+          </>
+        )}
         <div className="readout">
           <span className="dim">Dónde está</span>
           <span>{account ? account.name : 'Banco o efectivo'}</span>
@@ -344,6 +466,8 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
       {mode === 'withdraw' && <MoveForm bucket={bucket} data={data} direction={-1} onDone={done} />}
       {mode === 'transfer' && <TransferForm bucket={bucket} data={data} onDone={done} />}
       {mode === 'setup' && <BucketForm bucket={bucket} data={data} onDone={done} />}
+      {mode === 'fijar' && <FijarForm bucket={bucket} data={data} onDone={done} />}
+      {mode === 'recognize' && <RecognizeForm bucket={bucket} data={data} onDone={done} />}
       {mode === 'view' && (
         <div className="verb-row">
           <button type="button" className="verb-button verb-primary" onClick={() => setMode('add')}>
@@ -356,7 +480,17 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
               Retirar
             </button>
           )}
-          {balance > 0 && hasOthers && (
+          <button type="button" className="verb-button" onClick={() => setMode('fijar')}>
+            <span className="key-glyph">F</span>
+            Fijar saldo
+          </button>
+          {opening > 0 && (
+            <button type="button" className="verb-button" onClick={() => setMode('recognize')}>
+              <span className="key-glyph">Y</span>
+              Ya está en mi banco
+            </button>
+          )}
+          {reserved > 0 && hasOthers && (
             <button type="button" className="verb-button" onClick={() => setMode('transfer')}>
               <span className="key-glyph">T</span>
               Mover
@@ -395,6 +529,11 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
                 <td className="wrap">
                   {move.reason}
                   <span className="row-sub">{BUCKET_SOURCE_LABEL[move.source]}</span>
+                  {move.source === 'opening' && move.amount < 0 && !move.reverses_id && !reversed.has(move.uuid) && (
+                    <button type="button" className="panel-verb" onClick={() => run(() => undoOpeningWithdrawal(move))}>
+                      Deshacer
+                    </button>
+                  )}
                 </td>
                 <td className={`num mono${move.amount > 0 ? ' text-cyan' : ''}`}>{money(move.amount)}</td>
               </tr>
@@ -485,6 +624,7 @@ export function Ahorro({
   const selectedBucket = active.find((bucket) => bucket.uuid === selected)
   const creating = selected === NEW_BUCKET
   const total = roundMoney(active.reduce((sum, bucket) => sum + bucketBalance(bucket, data.bucketMoves), 0))
+  const openingTotal = roundMoney(active.reduce((sum, bucket) => sum + Math.max(0, openingBalance(bucket.uuid, data.bucketMoves)), 0))
 
   return (
     <div className={`stage-grid${selectedBucket || creating ? '' : ' stage-grid--single'}`}>
@@ -521,7 +661,7 @@ export function Ahorro({
         </div>
         <FooterHint>
           {total > 0
-            ? `Tienes ${money(total)} apartados. Lo que está en banco o efectivo ya no cuenta como disponible.`
+            ? `Tienes ${money(total)} apartados.${openingTotal > 0 ? ` ${money(openingTotal)} no están en tus cuentas.` : ''} Lo reservado en banco o efectivo ya no cuenta como disponible.`
             : 'Tus apartados se llenan a mano o con las reglas del primer y segundo ingreso.'}
         </FooterHint>
         <RulesPanel data={data} onAdd={onAdd} />

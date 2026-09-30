@@ -1,12 +1,14 @@
 import type { Tone } from '../components/hud'
 import type { Account, CreditCard } from '../db/types'
 import { roundMoney } from './money'
+import { payableBalance } from './msi'
 
 export interface RealAvailableBreakdown {
   bank: number
   cash: number
   unassigned: number
   ccReserve: number
+  ccMsiPending: number
   billsBeforeNextIncome: number
   loanInstallmentsBeforeNextIncome: number
   bucketsInLiquid: number
@@ -21,6 +23,7 @@ export interface RealAvailableInput {
   billsBeforeNextIncome?: number
   loanInstallmentsBeforeNextIncome?: number
   bucketsInLiquid?: number
+  msiPending?: Record<string, number>
 }
 
 function sumBalances(accounts: Account[], type: Account['type']): number {
@@ -29,10 +32,10 @@ function sumBalances(accounts: Account[], type: Account['type']): number {
     .reduce((sum, account) => sum + account.current_balance, 0)
 }
 
-export function ccReserve(cards: CreditCard[]): number {
+export function ccReserve(cards: CreditCard[], msiPending: Record<string, number> = {}): number {
   return cards
     .filter((card) => card.payment_strategy === 'full')
-    .reduce((sum, card) => sum + Math.max(0, card.current_balance), 0)
+    .reduce((sum, card) => sum + payableBalance(card, msiPending), 0)
 }
 
 export function computeRealAvailable({
@@ -42,11 +45,13 @@ export function computeRealAvailable({
   billsBeforeNextIncome = 0,
   loanInstallmentsBeforeNextIncome = 0,
   bucketsInLiquid = 0,
+  msiPending = {},
 }: RealAvailableInput): RealAvailableBreakdown {
   const bank = sumBalances(accounts, 'checking')
   const cash = sumBalances(accounts, 'cash')
   const unassigned = sumBalances(accounts, 'unassigned')
-  const reserve = ccReserve(cards)
+  const reserve = ccReserve(cards, msiPending)
+  const fullDebt = ccReserve(cards)
 
   const total = roundMoney(
     bank + cash + unassigned - reserve - billsBeforeNextIncome - loanInstallmentsBeforeNextIncome - bucketsInLiquid - buffer,
@@ -57,6 +62,7 @@ export function computeRealAvailable({
     cash: roundMoney(cash),
     unassigned: roundMoney(unassigned),
     ccReserve: roundMoney(reserve),
+    ccMsiPending: roundMoney(fullDebt - reserve),
     billsBeforeNextIncome,
     loanInstallmentsBeforeNextIncome,
     bucketsInLiquid,

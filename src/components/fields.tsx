@@ -11,6 +11,7 @@ export function TextField({
   mono = false,
   max,
   autoFocus,
+  list,
 }: {
   label: string
   value: string
@@ -22,6 +23,7 @@ export function TextField({
   mono?: boolean
   max?: string
   autoFocus?: boolean
+  list?: string
 }) {
   return (
     <label className="field">
@@ -35,6 +37,7 @@ export function TextField({
         value={value}
         max={max}
         autoFocus={autoFocus}
+        list={list}
         aria-invalid={invalid}
         onChange={(event) => onChange(event.target.value)}
       />

@@ -48,6 +48,8 @@ export interface Transaction extends BaseRecord {
   loan_installment_id?: string | null
   loan_extra_id?: string | null
   bucket_id?: string | null
+  /** Card expense split into interest-free monthly charges (meses sin intereses). */
+  msi_months?: number | null
 }
 
 export type BucketRule = 'emergency' | 'retirement' | 'travel'
@@ -70,7 +72,7 @@ export interface IncomeShare {
   amount: number
 }
 
-export type BucketMoveSource = 'manual' | 'first_income' | 'second_income' | 'bucket_transfer'
+export type BucketMoveSource = 'manual' | 'first_income' | 'second_income' | 'bucket_transfer' | 'opening'
 
 export interface BucketMove extends BaseRecord {
   bucket_id: string
@@ -128,6 +130,48 @@ export interface LoanInstallment extends BaseRecord {
   replaced_by?: string | null
 }
 
+export type PriceUnit = 'pza' | 'kg' | 'g' | 'L' | 'ml'
+export type PlaceKind = 'supermarket' | 'market' | 'convenience' | 'other'
+
+/** A store or stall. Not an account: it never holds money. */
+export interface Place extends BaseRecord {
+  name: string
+  normalized_name: string
+  kind: PlaceKind
+  area: string | null
+}
+
+export interface Item extends BaseRecord {
+  name: string
+  normalized_name: string
+  default_unit: PriceUnit
+  category_id: string | null
+  barcode?: string | null
+}
+
+/** One product on an expense. Explains the expense; never moves a balance. */
+export interface TransactionLine extends BaseRecord {
+  transaction_id: string
+  item_id: string
+  place_id: string | null
+  date: string
+  qty: number | null
+  unit: PriceUnit
+  unit_price: number | null
+  line_total: number
+  currency: 'MXN'
+}
+
+export type AiTask = 'parse_receipt' | 'parse_bank_statement'
+export type AiJobStatus = 'prompt_copied' | 'json_pasted' | 'validated' | 'committed' | 'failed'
+
+export interface AiJob extends BaseRecord {
+  task: AiTask
+  status: AiJobStatus
+  prompt_hash: string
+  response_hash: string | null
+}
+
 export type CategoryKind = 'expense' | 'income'
 
 export interface Category extends BaseRecord {
@@ -149,6 +193,7 @@ export interface ProjectionScenario extends BaseRecord {
   amount: number
   date: string
   card_id: string | null
+  msi_months?: number | null
   income_monthly: number | null
   extra_expenses: number
   daily_spend?: number

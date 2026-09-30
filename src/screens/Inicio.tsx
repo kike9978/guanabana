@@ -115,7 +115,11 @@ export function Inicio({
     { label: 'Banco', value: breakdown.bank, show: true },
     { label: 'Efectivo', value: breakdown.cash, show: true },
     { label: 'Saldo sin origen', value: breakdown.unassigned, show: breakdown.unassigned !== 0 },
-    { label: '− Deuda TDC', value: breakdown.ccReserve, show: true },
+    {
+      label: breakdown.ccMsiPending > 0 ? `− Deuda TDC (sin ${money(breakdown.ccMsiPending)} a meses por cobrar)` : '− Deuda TDC',
+      value: breakdown.ccReserve,
+      show: true,
+    },
     { label: '− Pagos antes del próximo ingreso', value: breakdown.billsBeforeNextIncome, show: true },
     { label: '− Cuotas de préstamos antes del próximo ingreso', value: breakdown.loanInstallmentsBeforeNextIncome, show: true },
     { label: '− Apartados en banco y efectivo', value: breakdown.bucketsInLiquid, show: true },

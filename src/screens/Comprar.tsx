@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { AmountField, FieldError, FieldNote, RangeField, SelectField, TextField } from '../components/fields'
+import { AmountField, ChoiceField, FieldError, FieldNote, RangeField, SelectField, TextField } from '../components/fields'
 import { FooterHint, GradeCard, Panel, type Tone } from '../components/hud'
 import { newRecord, writeAcross } from '../db/db'
 import { selectable } from '../db/accounts'
@@ -11,6 +11,7 @@ import { expectedIncome, monthKey } from '../lib/budgets'
 import { isoToDate, todayIso } from '../lib/dates'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { roundMoney } from '../lib/money'
+import { MSI_TERMS } from '../lib/msi'
 import { parseAmount } from '../lib/parseAmount'
 import {
   habitualDailySpend,
@@ -25,6 +26,7 @@ const money = (value: number) => formatMoney(value, 'MXN')
 const INCOME_STEP = 500
 const EXTRA_STEP = 250
 const DAILY_STEP = 10
+const MSI_NONE = 1
 
 function resultTone(result: PurchaseResult): Tone {
   if (result.after < 0 || result.lowest.available < 0) return 'shortfall'
@@ -50,6 +52,7 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso())
   const [cardId, setCardId] = useState('')
+  const [msiMonths, setMsiMonths] = useState(MSI_NONE)
   const [incomeMonthly, setIncomeMonthly] = useState(scheduledMonthly)
   const [extra, setExtra] = useState(0)
   const habit = habitualDailySpend(data.transactions, today)
@@ -66,6 +69,7 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
     amount: value ?? 0,
     date: date < todayIso() ? todayIso() : date,
     cardId: cardId || null,
+    msiMonths: cardId ? msiMonths : null,
     incomeFactor: incomeFactor * factor,
     extraExpenses: extra,
     dailySpend,
@@ -73,6 +77,7 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
   const ready = value !== null && value > 0 && Boolean(date)
   const results = ready ? INCOME_SCENARIOS.map((s) => ({ ...s, result: projectPurchase(data, today, input(s.factor)) })) : []
   const chosen = results.find((r) => r.id === scenario)?.result
+  const required = chosen ? (chosen.card?.nextPaymentRise ?? value ?? 0) : 0
   const held = bucketsInLiquid(data.buckets, data.bucketMoves, data.accounts)
   const short = chosen ? Math.max(0, -Math.min(chosen.after, chosen.lowest.available)) : 0
   const horizon = new Date(today.getFullYear(), today.getMonth(), today.getDate() + PROJECTION_HORIZON_DAYS)
@@ -84,6 +89,7 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
       amount: value,
       date,
       card_id: cardId || null,
+      msi_months: cardId && msiMonths !== MSI_NONE ? msiMonths : null,
       income_monthly: scheduledMonthly > 0 ? incomeMonthly : null,
       extra_expenses: extra,
       daily_spend: dailySpend,
@@ -101,6 +107,7 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
     setAmount(String(record.amount))
     setDate(record.date)
     setCardId(record.card_id && data.cards.some((c) => c.uuid === record.card_id) ? record.card_id : '')
+    setMsiMonths(record.msi_months ?? MSI_NONE)
     setIncomeMonthly(record.income_monthly ?? scheduledMonthly)
     setExtra(record.extra_expenses)
     setDailySpend(record.daily_spend ?? 0)
@@ -124,6 +131,14 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
                 value={cardId}
                 onChange={setCardId}
                 options={[{ value: '', label: 'Banco o efectivo' }, ...cards.map((c) => ({ value: c.uuid, label: `Tarjeta ${c.name}` }))]}
+              />
+            )}
+            {cardId && (
+              <ChoiceField
+                label="Meses sin intereses"
+                value={String(msiMonths)}
+                onChange={(v) => setMsiMonths(Number(v))}
+                options={[{ value: String(MSI_NONE), label: 'No' }, ...MSI_TERMS.map((term) => ({ value: String(term), label: String(term) }))]}
               />
             )}
             {scheduledMonthly > 0 ? (
@@ -198,8 +213,8 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
                   Disponible real
                   <span className="row-sub">{chosen ? formatDate(chosen.date) : 'El día de la compra'}</span>
                 </td>
-                <td className="num mono">{ready && value !== null ? money(value) : '—'}</td>
-                <td className={`num mono${chosen && chosen.before < (value ?? 0) ? ' text-heat' : ''}`}>{chosen ? money(chosen.before) : '—'}</td>
+                <td className="num mono">{chosen ? money(required) : '—'}</td>
+                <td className={`num mono${chosen && chosen.before < required ? ' text-heat' : ''}`}>{chosen ? money(chosen.before) : '—'}</td>
               </tr>
               <tr>
                 <td>Después de comprar</td>
@@ -218,7 +233,10 @@ export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }
                 <tr>
                   <td>
                     Deuda en {chosen.card.card.name}
-                    <span className="row-sub">Tu próximo pago sube {money(value ?? 0)}</span>
+                    <span className="row-sub">
+                      {`Tu próximo pago sube ${money(chosen.card.nextPaymentRise)}`}
+                      {msiMonths !== MSI_NONE ? ` · ${msiMonths} MSI` : ''}
+                    </span>
                   </td>
                   <td className="num mono">{money(chosen.card.card.current_balance)}</td>
                   <td className="num mono">{money(chosen.card.debtAfter)}</td>

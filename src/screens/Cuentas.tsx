@@ -17,9 +17,11 @@ import {
 import type { Account, AccountType, CreditCard, PaymentStrategy } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { formatDate, formatMoney } from '../lib/format'
+import { categoryLabel } from '../lib/categories'
 import { isoToDate, nextDateForDay } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { parseAmount, parseDay } from '../lib/parseAmount'
+import { msiPendingByCard, msiPlans, msiPostedCount, msiPurchase, msiSchedule, payableBalance } from '../lib/msi'
 import { computeRealAvailable } from '../lib/realAvailable'
 
 type NewAccountType = Exclude<AccountType, 'unassigned'>
@@ -134,7 +136,13 @@ function CardForm({ card, onDone }: { card?: CreditCard; onDone: () => void }) {
 function realAvailableWith(data: MoneyData, target: Account | CreditCard, balance: number): number {
   const swap = <T extends { uuid: string; current_balance: number }>(records: T[]) =>
     records.map((record) => (record.uuid === target.uuid ? { ...record, current_balance: balance } : record))
-  return computeRealAvailable({ accounts: swap(data.accounts), cards: swap(data.cards), buffer: 0 }).total
+  const cards = swap(data.cards)
+  return computeRealAvailable({
+    accounts: swap(data.accounts),
+    cards,
+    buffer: 0,
+    msiPending: msiPendingByCard(data.transactions, cards, new Date()),
+  }).total
 }
 
 export function ReconcileForm({
@@ -158,6 +166,7 @@ export function ReconcileForm({
   const gap = value === null ? null : roundMoney(value - record.current_balance)
   const impact = value === null ? 0 : roundMoney(realAvailableWith(data, record, value) - realAvailableWith(data, record, record.current_balance))
   const isCard = target.kind === 'card'
+  const cardMsi = isCard ? (msiPendingByCard(data.transactions, [record as CreditCard], new Date())[record.uuid] ?? 0) : 0
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -202,6 +211,9 @@ export function ReconcileForm({
           </div>
         )}
       </div>
+      {isCard && cardMsi > 0 && (
+        <FieldNote>Escribe la deuda total, con los {money(cardMsi)} a meses que aún no llegan a tu estado de cuenta.</FieldNote>
+      )}
       <FieldNote>
         {gap === 0 ? 'Todo cuadra. No hace falta ajustar.' : 'La diferencia se registra como un ajuste en Movimientos. Puedes eliminarlo después.'}
       </FieldNote>
@@ -226,6 +238,18 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
   const lastAdjustment = data.transactions
     .filter((tx) => tx.type === 'adjustment' && (card ? tx.cc_id === card.uuid : tx.account_id === record.uuid))
     .sort((a, b) => b.date.localeCompare(a.date))[0]
+  const now = new Date()
+  const msiPending = card ? (msiPendingByCard(data.transactions, [card], now)[card.uuid] ?? 0) : 0
+  const msiRows = card
+    ? msiPlans(data.transactions, card)
+        .map((tx) => {
+          const charges = msiSchedule(msiPurchase(tx), card.statement_day)
+          const posted = msiPostedCount(charges, now)
+          return { tx, charges, posted, concept: categoryLabel(tx.category_id, data.categories) ?? (tx.notes || 'Compra') }
+        })
+        .filter((row) => row.posted < row.charges.length)
+        .sort((a, b) => a.tx.date.localeCompare(b.tx.date))
+    : []
 
   async function toggleArchive() {
     if (!record) return
@@ -260,6 +284,18 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
               <span className="dim">{card ? 'Deuda' : 'Saldo'}</span>
               <span className="mono">{money(record.current_balance)}</span>
             </div>
+            {card && msiPending > 0 && (
+              <>
+                <div className="readout">
+                  <span className="dim">A meses por cobrar</span>
+                  <span className="mono">{money(msiPending)}</span>
+                </div>
+                <div className="readout">
+                  <span className="dim">Pago sin meses por cobrar</span>
+                  <span className="mono">{money(payableBalance(card, { [card.uuid]: msiPending }))}</span>
+                </div>
+              </>
+            )}
             <div className="readout">
               <span className="dim">Tipo</span>
               <span>{account ? ACCOUNT_TYPE_LABEL[account.type] : `TDC · ${STRATEGY_LABEL[card!.payment_strategy]}`}</span>
@@ -273,6 +309,29 @@ function Dossier({ data, selection, onClose }: { data: MoneyData; selection: Sel
               <span className="mono">{lastAdjustment ? formatDate(isoToDate(lastAdjustment.date)) : '—'}</span>
             </div>
           </div>
+          {msiRows.length > 0 && (
+            <table className="roster">
+              <thead>
+                <tr>
+                  <th scope="col">Meses sin intereses</th>
+                  <th scope="col" className="num">Mensualidad</th>
+                  <th scope="col">Última</th>
+                </tr>
+              </thead>
+              <tbody>
+                {msiRows.map((row) => (
+                  <tr key={row.tx.uuid}>
+                    <td>
+                      {row.concept}
+                      <span className="row-sub">{`${row.posted} de ${row.charges.length} · ${money(row.tx.amount)}`}</span>
+                    </td>
+                    <td className="num mono">{money(row.charges[0].amount)}</td>
+                    <td className="mono dim">{formatDate(row.charges[row.charges.length - 1].date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           <div className="verb-row">
             {!record.archived && (
               <button type="button" className="verb-button verb-primary" onClick={() => setMode('reconcile')}>
@@ -317,6 +376,7 @@ export function Cuentas() {
     .filter((a) => !a.archived)
     .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name))
   const cards = data.cards.filter((c) => !c.archived)
+  const msiPending = msiPendingByCard(data.transactions, cards, new Date())
   const archived: { selection: Selection; name: string; label: string; balance: number }[] = [
     ...data.accounts
       .filter((a) => a.archived)
@@ -401,7 +461,7 @@ export function Cuentas() {
               </thead>
               <tbody>
                 {cards.map((card) => {
-                  const after = roundMoney(bank - card.current_balance)
+                  const after = roundMoney(bank - payableBalance(card, msiPending))
                   return (
                     <tr
                       key={card.uuid}
@@ -414,6 +474,7 @@ export function Cuentas() {
                         {card.name}
                         <span className="row-sub">
                           Corte día {card.statement_day} · {STRATEGY_LABEL[card.payment_strategy]}
+                          {msiPending[card.uuid] ? ` · ${money(msiPending[card.uuid])} a meses` : ''}
                         </span>
                       </td>
                       <td className="num mono">{money(card.current_balance)}</td>
@@ -426,7 +487,13 @@ export function Cuentas() {
               </tbody>
             </table>
           )}
-          {cards.length > 0 && <FooterHint>Banco tras pago: cuánto queda en tu banco si pagas el total.</FooterHint>}
+          {cards.length > 0 && (
+            <FooterHint>
+              {Object.keys(msiPending).length > 0
+                ? 'Banco tras pago: cuánto queda en tu banco si pagas el total, sin las mensualidades que aún no llegan.'
+                : 'Banco tras pago: cuánto queda en tu banco si pagas el total.'}
+            </FooterHint>
+          )}
         </Panel>
 
         {archived.length > 0 && (

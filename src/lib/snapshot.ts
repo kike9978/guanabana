@@ -1,6 +1,7 @@
 import type { MoneyData } from '../db/useMoneyData'
 import { bucketsInLiquid } from './buckets'
 import { billCommitments, incomeCycle, loanCommitments, sumCommitments, type Commitment, type IncomeCycle } from './cycle'
+import { msiPendingByCard } from './msi'
 import { computeRealAvailable, type RealAvailableBreakdown } from './realAvailable'
 
 export interface MoneySnapshot {
@@ -24,6 +25,7 @@ export function moneySnapshot(data: MoneyData, today: Date): MoneySnapshot {
       billsBeforeNextIncome: sumCommitments(bills),
       loanInstallmentsBeforeNextIncome: sumCommitments(loans),
       bucketsInLiquid: bucketsInLiquid(data.buckets, data.bucketMoves, data.accounts),
+      msiPending: msiPendingByCard(data.transactions, data.cards, today),
     }),
   }
 }

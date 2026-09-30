@@ -1,5 +1,5 @@
 export const features = {
-  aiBridge: false,
+  aiBridge: true,
   share: false,
   lock: false,
 }

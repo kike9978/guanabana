@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { addLabel, type AddPrefill, type AddType } from '../app/navigation'
+import { AiBridge } from '../components/AiBridge'
 import { Panel } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import type { Transaction } from '../db/types'
@@ -25,6 +27,7 @@ export function AddScreen({
   onOpenAccounts: () => void
 }) {
   const data = useMoneyData()
+  const [bridge, setBridge] = useState(false)
   const label = addLabel(type)
   const formProps = { data, onDone, onNext, onOpenAccounts, prefill, editing }
   const title = editing ? `Editar ${label.toLowerCase()}` : prefill?.notes ? `${label} · ${prefill.notes}` : label
@@ -32,9 +35,11 @@ export function AddScreen({
   return (
     <div className="stage-grid stage-grid--single">
       <div className="stage-main stage-narrow">
-        <StageHeader title={title} aiBridge={!editing && (type === 'expense' || type === 'income')} />
-        <Panel title="Registro">
-          {!data.loaded ? null : (
+        <StageHeader title={title} aiBridge={!editing && type === 'expense'} onAi={() => setBridge(true)} />
+        <Panel title={bridge ? 'Guanabana IA' : 'Registro'}>
+          {!data.loaded ? null : bridge ? (
+            <AiBridge task="parse_receipt" data={data} onClose={() => setBridge(false)} onDone={onDone} />
+          ) : (
             <>
               {type === 'expense' && <ExpenseForm {...formProps} />}
               {type === 'income' && <IncomeForm {...formProps} />}

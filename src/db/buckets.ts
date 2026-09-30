@@ -9,6 +9,7 @@ export const BUCKET_SOURCE_LABEL: Record<BucketMoveSource, string> = {
   first_income: 'Regla del primer ingreso',
   second_income: 'Regla del segundo ingreso',
   bucket_transfer: 'Entre apartados',
+  opening: 'Saldo ya apartado',
 }
 
 export function isSystemBucket(bucket: SavingsBucket): boolean {
@@ -66,6 +67,57 @@ export async function fundFromBucket(fields: { bucket: SavingsBucket; from: Acco
     tx_id: transfer.uuid,
   })
   await recordWithBucketMoves(transfer, [move])
+}
+
+export async function fijarSaldo(bucket: SavingsBucket, gap: number): Promise<void> {
+  if (gap === 0) return
+  await moveToBucket(bucket, {
+    amount: gap,
+    reason: gap > 0 ? 'Saldo ya apartado' : 'Ajuste del saldo fijado',
+    source: 'opening',
+  })
+}
+
+/** The opening portion becomes a normal reserve: one reversing opening row and one manual row. */
+export async function recognizeOpening(bucket: SavingsBucket, amount: number): Promise<void> {
+  const date = todayIso()
+  const row = (signed: number, source: BucketMoveSource) =>
+    newRecord<BucketMove>({
+      bucket_id: bucket.uuid,
+      amount: signed,
+      reason: 'Ya está en el banco',
+      source,
+      date,
+      income_tx_id: null,
+    })
+  await putMany('bucket_moves', [row(-amount, 'opening'), row(amount, 'manual')])
+}
+
+export async function withdrawFromBucket(bucket: SavingsBucket, fields: { fromReserved: number; fromOpening: number; reason: string }): Promise<void> {
+  const date = todayIso()
+  const rows = [
+    fields.fromReserved > 0
+      ? newRecord<BucketMove>({ bucket_id: bucket.uuid, amount: -fields.fromReserved, reason: fields.reason, source: 'manual', date, income_tx_id: null })
+      : null,
+    fields.fromOpening > 0
+      ? newRecord<BucketMove>({ bucket_id: bucket.uuid, amount: -fields.fromOpening, reason: fields.reason, source: 'opening', date, income_tx_id: null })
+      : null,
+  ].filter((row) => row !== null)
+  await putMany('bucket_moves', rows)
+}
+
+export async function undoOpeningWithdrawal(move: BucketMove): Promise<void> {
+  await putMany('bucket_moves', [
+    newRecord<BucketMove>({
+      bucket_id: move.bucket_id,
+      amount: -move.amount,
+      reason: 'Se deshizo el retiro',
+      source: 'opening',
+      date: todayIso(),
+      income_tx_id: null,
+      reverses_id: move.uuid,
+    }),
+  ])
 }
 
 export async function moveToBucket(

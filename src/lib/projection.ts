@@ -3,6 +3,7 @@ import type { MoneyData } from '../db/useMoneyData'
 import { incomeCycle, loanCommitments } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
 import { roundMoney } from './money'
+import { msiUnbilled } from './msi'
 import { moneySnapshot } from './snapshot'
 import { timeline } from './timeline'
 
@@ -117,6 +118,7 @@ export interface PurchaseInput extends ProjectionAssumptions {
   amount: number
   date: string
   cardId: string | null
+  msiMonths?: number | null
 }
 
 export interface Checkpoint {
@@ -131,7 +133,7 @@ export interface PurchaseResult {
   lowest: Checkpoint
   checkpoints: Checkpoint[]
   unknownIncome: number
-  card: { card: CreditCard; debtAfter: number } | null
+  card: { card: CreditCard; debtAfter: number; nextPaymentRise: number } | null
 }
 
 export function projectPurchase(data: MoneyData, today: Date, input: PurchaseInput): PurchaseResult {
@@ -141,13 +143,15 @@ export function projectPurchase(data: MoneyData, today: Date, input: PurchaseInp
     .filter((e) => e.kind === 'income')
     .map((e) => e.date)
   const dates = [on, ...incomeDates, horizon].filter((date, index, all) => all.findIndex((d) => d.getTime() === date.getTime()) === index)
+  const card = data.cards.find((c) => c.uuid === input.cardId)
+  const msi = card && (input.msiMonths ?? 0) > 1 ? { date: dateToIso(on), amount: input.amount, months: input.msiMonths! } : null
+  const cost = (date: Date) => (msi && card ? roundMoney(input.amount - msiUnbilled(msi, card.statement_day, date)) : input.amount)
   const checkpoints = dates.map((date) => ({
     date,
-    available: roundMoney(projectedAvailable(data, today, date, input) - input.amount),
+    available: roundMoney(projectedAvailable(data, today, date, input) - cost(date)),
   }))
-  const before = roundMoney(checkpoints[0].available + input.amount)
+  const before = roundMoney(checkpoints[0].available + cost(on))
   const lowest = checkpoints.reduce((min, point) => (point.available < min.available ? point : min))
-  const card = data.cards.find((c) => c.uuid === input.cardId)
   return {
     date: on,
     before,
@@ -155,6 +159,6 @@ export function projectPurchase(data: MoneyData, today: Date, input: PurchaseInp
     lowest,
     checkpoints,
     unknownIncome: data.recurring.filter((item) => item.active && item.type === 'income' && item.amount === null).length,
-    card: card ? { card, debtAfter: roundMoney(card.current_balance + input.amount) } : null,
+    card: card ? { card, debtAfter: roundMoney(card.current_balance + input.amount), nextPaymentRise: cost(on) } : null,
   }
 }

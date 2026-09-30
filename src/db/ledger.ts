@@ -2,17 +2,54 @@ import { balanceEffects } from '../lib/ledger'
 import { todayIso } from '../lib/dates'
 import { roundMoney } from '../lib/money'
 import { complete, newRecord, notifyChange, openDb, settle, type StoreName } from './db'
-import type { Account, BucketMove, CreditCard, LoanInstallment, Transaction } from './types'
+import type { Account, BucketMove, CreditCard, Item, LoanInstallment, Place, Transaction, TransactionLine } from './types'
 
-const LEDGER_STORES: StoreName[] = ['transactions', 'accounts', 'credit_cards', 'loan_installments', 'bucket_moves']
+const LEDGER_STORES: StoreName[] = [
+  'transactions',
+  'accounts',
+  'credit_cards',
+  'loan_installments',
+  'bucket_moves',
+  'transaction_lines',
+  'items',
+  'places',
+]
 
 export class LedgerBlockedError extends Error {}
+
+/** The full set of lines for the transaction being put, plus any items and places they introduce. */
+export interface LineWrite {
+  lines: TransactionLine[]
+  items: Item[]
+  places: Place[]
+}
 
 interface LedgerChange {
   remove?: Transaction
   put?: Transaction
+  putMany?: Transaction[]
   installments?: LoanInstallment[]
   bucketMoves?: BucketMove[]
+  lines?: LineWrite
+}
+
+/** Replaces a transaction's lines, and drops items left with no line so price history keeps no ghost rows. */
+async function writeLines(tx: IDBTransaction, change: LedgerChange): Promise<void> {
+  const replacing = change.remove && (!change.put || change.lines)
+  if (!replacing && !change.lines) return
+  const lineStore = tx.objectStore('transaction_lines')
+  const existing = await getAllIn<TransactionLine>(lineStore)
+  const dropped = replacing ? existing.filter((line) => line.transaction_id === change.remove!.uuid) : []
+  for (const line of dropped) lineStore.delete(line.uuid)
+  for (const place of change.lines?.places ?? []) tx.objectStore('places').put(place)
+  for (const item of change.lines?.items ?? []) tx.objectStore('items').put(item)
+  for (const line of change.lines?.lines ?? []) lineStore.put(line)
+
+  const droppedIds = new Set(dropped.map((line) => line.uuid))
+  const inUse = new Set([...existing.filter((line) => !droppedIds.has(line.uuid)), ...(change.lines?.lines ?? [])].map((line) => line.item_id))
+  for (const itemId of new Set(dropped.map((line) => line.item_id))) {
+    if (!inUse.has(itemId)) tx.objectStore('items').delete(itemId)
+  }
 }
 
 async function reverseLinkedMoves(tx: IDBTransaction, record: Transaction): Promise<void> {
@@ -65,6 +102,7 @@ function netEffects(change: LedgerChange): Map<string, { store: 'accounts' | 'cr
   }
   if (change.remove) add(change.remove, -1)
   if (change.put) add(change.put, 1)
+  for (const record of change.putMany ?? []) add(record, 1)
   return net
 }
 
@@ -90,8 +128,10 @@ async function applyLedger(change: LedgerChange): Promise<void> {
     if (change.remove && !change.put) await reverseLinkedMoves(tx, change.remove)
     if (change.remove && change.remove.uuid !== change.put?.uuid) transactions.delete(change.remove.uuid)
     if (change.put) transactions.put(change.put)
+    for (const record of change.putMany ?? []) transactions.put(record)
     for (const row of change.installments ?? []) tx.objectStore('loan_installments').put(row)
     for (const move of change.bucketMoves ?? []) tx.objectStore('bucket_moves').put(move)
+    await writeLines(tx, change)
   } catch (error) {
     tx.abort()
     await done.catch(() => undefined)
@@ -123,17 +163,27 @@ export function recordTransaction(record: Transaction): Promise<void> {
   return applyLedger({ put: record })
 }
 
-export function updateTransaction(previous: Transaction, next: Transaction): Promise<void> {
-  return applyLedger({ remove: previous, put: { ...next, uuid: previous.uuid, updated_at: new Date().toISOString() } })
+/** Several movements and their balance changes, in one write. */
+export function recordTransactions(records: Transaction[]): Promise<void> {
+  return applyLedger({ putMany: records })
 }
 
-export async function saveTransaction(editing: Transaction | undefined, fields: DraftFields): Promise<string> {
+export function updateTransaction(previous: Transaction, next: Transaction, lines?: LineWrite): Promise<void> {
+  return applyLedger({ remove: previous, put: { ...next, uuid: previous.uuid, updated_at: new Date().toISOString() }, lines })
+}
+
+/** With `buildLines`, the transaction's lines are replaced in the same write. Without it, lines stay as they are. */
+export async function saveTransaction(
+  editing: Transaction | undefined,
+  fields: DraftFields,
+  buildLines?: (transactionId: string) => LineWrite,
+): Promise<string> {
   if (editing) {
-    await updateTransaction(editing, { ...editing, ...fields })
+    await updateTransaction(editing, { ...editing, ...fields }, buildLines?.(editing.uuid))
     return editing.uuid
   }
   const record = draftTransaction(fields)
-  await recordTransaction(record)
+  await applyLedger({ put: record, lines: buildLines?.(record.uuid) })
   return record.uuid
 }
 

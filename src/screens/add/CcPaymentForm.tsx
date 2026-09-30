@@ -5,6 +5,7 @@ import { fundFromBucket } from '../../db/buckets'
 import { saveTransaction } from '../../db/ledger'
 import { bucketFundingOptions, type BucketFunding } from '../../lib/buckets'
 import { roundMoney } from '../../lib/money'
+import { msiPendingByCard, payableBalance } from '../../lib/msi'
 import type { AddFormProps } from './formProps'
 import { todayIso } from '../../lib/dates'
 import { formatMoney } from '../../lib/format'
@@ -38,6 +39,7 @@ export function CcPaymentForm({ data, onDone, onOpenAccounts, prefill, editing }
   const card = data.cards.find((c) => c.uuid === activeCard)
   const account = data.accounts.find((a) => a.uuid === activeAccount)
   const value = parseAmount(amount)
+  const payable = card ? payableBalance(card, msiPendingByCard(data.transactions, [card], new Date())) : 0
   const available = account ? roundMoney(account.current_balance + (editing?.account_id === account.uuid ? editing.amount : 0)) : 0
   const shortBy = account && value !== null ? roundMoney(value - available) : 0
   const fundingOptions = account ? bucketFundingOptions(data.buckets, data.bucketMoves, data.accounts, account, shortBy) : []
@@ -84,10 +86,20 @@ export function CcPaymentForm({ data, onDone, onOpenAccounts, prefill, editing }
       <AmountField label="Monto pagado (MXN)" value={amount} onChange={(v) => { setAmount(v); setError(null) }} invalid={error !== null} autoFocus />
       {card && card.current_balance > 0 && (
         <div className="verb-row">
+          {payable < card.current_balance && (
+            <button type="button" className="verb-button" onClick={() => setAmount(String(payable))}>
+              Pagar sin meses · <span className="mono">{formatMoney(payable, 'MXN')}</span>
+            </button>
+          )}
           <button type="button" className="verb-button" onClick={() => setAmount(String(card.current_balance))}>
             Pagar total · <span className="mono">{formatMoney(card.current_balance, 'MXN')}</span>
           </button>
         </div>
+      )}
+      {card && payable < card.current_balance && (
+        <FieldNote>
+          {`${formatMoney(roundMoney(card.current_balance - payable), 'MXN')} son mensualidades a meses que aún no llegan. Pagarlas antes es opcional.`}
+        </FieldNote>
       )}
       {activeAccount && <SelectField label="Desde" value={activeAccount} onChange={setAccountId} options={accountOptions} />}
       <TextField label="Fecha" type="date" value={date} onChange={setDate} mono />

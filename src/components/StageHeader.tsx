@@ -5,10 +5,12 @@ export function StageHeader({
   title,
   aiBridge = false,
   share = false,
+  onAi,
 }: {
   title: string
   aiBridge?: boolean
   share?: boolean
+  onAi?: () => void
 }) {
   const showAi = aiBridge && features.aiBridge
   const showShare = share && features.share
@@ -19,7 +21,7 @@ export function StageHeader({
       {(showAi || showShare) && (
         <div className="stage-verbs">
           {showAi && (
-            <button type="button" className="verb" aria-label="Guanabana IA">
+            <button type="button" className="verb" aria-label="Guanabana IA" onClick={onAi}>
               <Icon name="sparkle" size={18} />
             </button>
           )}

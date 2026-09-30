@@ -109,10 +109,11 @@ Four layers. Location is not purpose.
 
 ```
 Liquid                  = Bank + Cash + Unassigned_Opening_Balance
-CC_Reserve              = sum of card balances whose strategy is full
+CC_Reserve              = sum over full-strategy cards of max(0, balance − MSI_Unbilled)
+MSI_Unbilled            = MSI charges whose statement period has not opened yet
 Bills_Before_Next_Income = recurring bills due before the next income event
 Loan_Installments_Before_Next_Income = loan installments due before the next income event
-Virtual_Buckets_In_Liquid = bucket balances held in bank or cash
+Virtual_Buckets_In_Liquid = bucket balances held in bank or cash, minus opening moves
 Buffer                  = settings.buffer_mxn
 
 Real_Available = Liquid − CC_Reserve − Bills_Before_Next_Income
@@ -122,7 +123,11 @@ Real_Available = Liquid − CC_Reserve − Bills_Before_Next_Income
 
 The opening balance lets the user start with one number (“tengo 12,000 hoy”) before saying where it sits. It is liquid money held in a single `unassigned` account, shown as **Saldo sin origen**. Assigning it later is a transfer to bank or cash, so Disponible real does not move.
 
+An apartado can also start with money that was already set aside and is not inside Banco, Efectivo, or Saldo sin origen. That amount is an opening move on the bucket. It counts in the apartado balance and in its progress, and it is left out of `Virtual_Buckets_In_Liquid`, so Disponible real does not change. Pesos that are already inside those accounts are not an opening: reserving them is Apartar, and Disponible real drops.
+
 Bank balance is never shown as spendable. A credit-card expense leaves the bank balance unchanged, raises card debt, and lowers Real Available immediately.
+
+A card purchase at meses sin intereses (MSI) raises card debt by the whole amount, but Real Available only reserves one monthly charge per statement. Charges are equal (the last keeps the cents) and fall on the card’s cut day, starting with the first cut on or after the purchase. Each charge enters the reserve the day after the previous cut, like any purchase in that period, so the first one counts right away. The unbilled rest is still owed and shows as “a meses por cobrar”; the projection picks up each charge as its period opens. Paying MSI early is allowed and only lowers the reserve to zero, never below.
 
 A loan’s full principal is not subtracted from today’s Real Available. Only the installments that fall before the next income are. The rest of the schedule drives the projection until the payoff date. Money the user lent to someone else is tracked as a receivable and never counts as available until it is received.
 
@@ -164,7 +169,7 @@ Local SQLite (Capacitor) or IndexedDB (PWA). Export is encrypted JSON. Every dom
 |---|---|
 | `accounts` | name, type (`checking` / `cash` / `savings` / `unassigned`), currency, current_balance, balance_date, archived |
 | `categories` | key, name, kind (`expense` / `income`), parent_id (optional, one level only), archived |
-| `transactions` | date, type (`income` / `expense` / `transfer` / `cc_payment` / `adjustment`, a signed reconcile gap that stats ignore), amount, currency, account_id, category_id (a category or a subcategory), place_id, payment_method (`bank` / `cash` / `credit_card`), cc_id, notes, source (`manual` / `ai_manual` / `import`). `amount` is always the MXN that landed. |
+| `transactions` | date, type (`income` / `expense` / `transfer` / `cc_payment` / `adjustment`, a signed reconcile gap that stats ignore), amount, currency, account_id, category_id (a category or a subcategory), place_id, payment_method (`bank` / `cash` / `credit_card`), cc_id, notes, source (`manual` / `ai_manual` / `import`), msi_months (card expenses only; null or 1 = one payment). `amount` is always the MXN that landed. The MSI schedule is derived from the row and the card’s cut day, so it merges with its transaction. |
 | `transaction_lines` | transaction_id, item_id, place_id, qty, unit, unit_price, line_total, currency |
 | `items` | name, normalized_name, default_unit, category_id, barcode (optional, local only) |
 | `places` | name, kind (`supermarket` / `market` / `convenience` / `other`), area |
@@ -172,11 +177,11 @@ Local SQLite (Capacitor) or IndexedDB (PWA). Export is encrypted JSON. Every dom
 | `loans` | name, direction (`borrowed` / `lent`), lender_label (short, no full names), principal, currency, interest (`none` / `fixed_rate` / `fixed_installment`), rate_annual, installment_amount, frequency (`monthly` / `biweekly` / `per_income`), income_slot (`first` / `second` / `both`, only for `per_income`), first_due_date, installment_count, pay_from_account_id, status (`active` / `paid` / `paused`) |
 | `loan_installments` | loan_id, due_date, amount, principal_part, interest_part, status (`scheduled` / `skipped` / `settled` / `superseded`), created_by, replaced_by. Paid and late are derived: an installment is paid when a transaction carries its `loan_installment_id` (or it is `settled`, paid before tracking), and late when it is unpaid past its due date. `superseded` rows were replaced by an extra payment and stay for undo. |
 | `savings_buckets` | name, target, target_date (optional), sort_order, archived, rule_type (`emergency` / `retirement` / `travel` / `custom`), account_id (null = bank or cash; a savings account = outside liquid), income_share (custom only, optional: `{income: first / second / both, amount}`). Balance is derived from `bucket_moves`. |
-| `bucket_moves` | bucket_id, amount (signed), date, reason, source (`manual` / `first_income` / `second_income` / `bucket_transfer`), income_tx_id, transfer_id (pairs the two moves of a bucket-to-bucket transfer), tx_id (the account transfer that funded it), reverses_id (a move that cancels another) |
+| `bucket_moves` | bucket_id, amount (signed), date, reason, source (`manual` / `opening` / `first_income` / `second_income` / `bucket_transfer`), income_tx_id, transfer_id (pairs the two moves of a bucket-to-bucket transfer), tx_id (the account transfer that funded it), reverses_id (a move that cancels another). `opening` is money already set aside outside liquid accounts. |
 | `recurring_items` | name, amount, due_day, account_id, category_id, type (`bill` / `income`) |
 | `budgets` | category_id (a category or a subcategory), month (`YYYY-MM`, or null for every month), limit_mxn |
 | `settings` | buffer_mxn, cash_reviewed_at, first_income_rule, second_income_rule |
-| `projection_scenarios` | name, amount, date, card_id, income_monthly, daily_spend, extra_expenses |
+| `projection_scenarios` | name, amount, date, card_id, msi_months, income_monthly, daily_spend, extra_expenses |
 | `ai_jobs` | task, status (`prompt_copied` / `json_pasted` / `validated` / `committed` / `failed`), prompt_hash, response_hash |
 | `share_events` | kind (`url` / `qr` / `file` / `p2p`), payload_hash |
 
@@ -280,6 +285,7 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Card expense does not change bank balance, increases card debt, and lowers Real Available immediately.
 - [x] CC payment reduces card debt and bank balance together.
 - [x] Refunds: a negative expense on a card reduces card debt and is not income.
+- [x] Meses sin intereses: a card expense can be split into 3, 6, 9, 12, 18, or 24 monthly charges (`msi_months`). The form previews the charge and the first and last cut. Card debt rises by the total; a full-strategy card reserves only the charges whose period has opened. The card roster and dossier show “a meses por cobrar” and each plan (charges posted, monthly amount, last cut). **Pagar sin meses** prefills the payment without the charges still to come. Movimientos marks the row “N MSI”. Refunds and bill or loan payments never use MSI.
 - [x] Transfer between accounts does not change Real Available except when it moves money in or out of a liquid account.
 - [x] Roster list: select, name, amount, method. Filter by method without leaving the HUD.
 - [x] Delete a movement after confirm. The balance effect is reversed in the same write.
@@ -316,6 +322,18 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Manual add and withdraw. Withdraw asks for a reason and shows the impact on Real Available.
 - [x] Bucket balances held in bank or cash count in `Virtual_Buckets_In_Liquid`. A bucket pointed at a savings account is already outside liquid and does not count twice.
 - [x] Ajustes holds the buffer and the second-income split.
+
+### Saldo ya apartado
+
+Apartar reserves pesos that already sit in Banco, Efectivo, or Saldo sin origen, so Disponible real drops by that amount. **Fijar saldo** is the other write: the apartado already holds this much, and that money is not in those accounts.
+
+- [x] From the apartado dossier, **Fijar saldo** asks for the total the card should show. The field is the current balance, not an amount to add. System and custom apartados both.
+- [x] The gap versus the balance now is one append-only `bucket_moves` row with `source: opening`. A later fijar appends only the new gap. The bank, cash, and unassigned balances do not move. This is not income and not a transfer.
+- [x] Opening moves are left out of `Virtual_Buckets_In_Liquid`. Confirm shows apartado now, the saldo being set, and Disponible real unchanged. The note says this money is not in the accounts.
+- [x] The new total cannot fall below the part already reserved from liquid (Apartar, income rules, moves between apartados). That part is released only with Retirar, which still frees Disponible real. Copy names the reserved amount.
+- [x] Retirar spends opening money only after the reserved part is gone. That withdrawal asks for a reason and does not change Disponible real, because those pesos were never in liquid. History keeps the opening row; undo appends a reversing move (`reverses_id`).
+- [x] **Ya está en mi banco** converts the opening portion into a normal reserve. Confirm shows the drop in Disponible real before the write. The conversion appends a reversing opening move and a `manual` move for the same amount.
+- [x] The grade card, its progress bar, and the pace row use the full apartado balance, opening included. The income-rule remainder keeps using `Virtual_Buckets_In_Liquid`, so an opening amount is not subtracted twice and does not shrink the suggestion. No second money path.
 
 ### Custom buckets
 
@@ -386,7 +404,7 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Expected income comes from recurring income items with an amount, in MXN. Without amounts, it uses the income already received that month and says so.
 ### Projections
 
-- [x] Inputs: purchase amount, target date (a past date means today), optional “pay with card”.
+- [x] Inputs: purchase amount, target date (a past date means today), optional “pay with card”, and with a card, optional meses sin intereses. With MSI each checkpoint subtracts only the charges posted by that date.
 - [x] Projection engine: `Real_Available_On(d)` is the same `moneySnapshot` formula run on projected data — expected income after today arrives, unpaid bills (from the current cycle) and borrowed installments up to `d` are paid from liquid, and the next cycle’s reserves apply. Lent money, unscheduled income, and income without an amount are not assumed. On today it equals Disponible real.
 - [x] Outputs: Disponible real on that date before and after the purchase, and the lowest point at each income event for the next 90 days. Shortfall copy is neutral and names the date. Card purchases show the card debt after; buckets in bank and cash show whether they would cover a shortfall. Nothing is written.
 - [x] Sliders: expected income per month (MXN, from scheduled paydays), habitual daily spending (prefilled with the average of the last 60 days of everyday expenses, without scheduled bills or installments), and one-off extra expenses until the date.
@@ -454,17 +472,17 @@ Subcategories are optional detail inside a category, for example Cine, Streaming
 
 A grocery trip can list products without using AI. Confirming a receipt later fills the same tables.
 
-- [ ] Optional lines on an expense: item, qty, unit, unit price or line total, place, date (defaults to the expense date).
-- [ ] `unit_price = line_total / qty` when qty > 0. If qty is missing, keep the line total and leave unit price empty. Empty unit prices stay off the chart.
-- [ ] Units: `pza`, `kg`, `g`, `L`, `ml`. Compare prices only inside one unit family (weight, volume, or piece). A kg price and a piece price never share a series.
-- [ ] Item match uses `normalized_name` (trim, lower case, strip accents). Display the name the user typed. A near-match asks. It does not merge.
-- [ ] Places are local rows: name, kind, optional area (colonia or city). No map and no store directory.
-- [ ] Unknown place still saves as **Sin lugar**.
-- [ ] Precios roster: item name, last unit price, last place, last date.
-- [ ] Item dossier: cyan series of unit price by date, and a requirements row — cheapest recent place vs last price paid.
-- [ ] Place filter on the dossier. Same item at Walmart, Chedraui, Oxxo, and the tianguis stays one item with many observations.
-- [ ] Deleting or editing an expense updates its lines. Price history does not keep a ghost row.
-- [ ] Scanning the same ticket twice does not double-count. Lines belong to one transaction `uuid`.
+- [x] Optional lines on an expense: item, qty, unit, unit price or line total, place, date (defaults to the expense date). (One place per expense in the form; each line stores it and the expense date. Line total wins over qty × unit price. A neutral note shows when the lines do not sum to the amount.)
+- [x] `unit_price = line_total / qty` when qty > 0. If qty is missing, keep the line total and leave unit price empty. Empty unit prices stay off the chart.
+- [x] Units: `pza`, `kg`, `g`, `L`, `ml`. Compare prices only inside one unit family (weight, volume, or piece). A kg price and a piece price never share a series.
+- [x] Item match uses `normalized_name` (trim, lower case, strip accents). Display the name the user typed. A near-match asks. It does not merge.
+- [x] Places are local rows: name, kind, optional area (colonia or city). No map and no store directory.
+- [x] Unknown place still saves as **Sin lugar**.
+- [x] Precios roster: item name, last unit price, last place, last date.
+- [x] Item dossier: cyan series of unit price by date, and a requirements row — cheapest recent place vs last price paid.
+- [x] Place filter on the dossier. Same item at Walmart, Chedraui, Oxxo, and the tianguis stays one item with many observations.
+- [x] Deleting or editing an expense updates its lines. Price history does not keep a ghost row. (Lines, new items, and new places save in the same write as the expense; items left with no line are removed.)
+- [x] Scanning the same ticket twice does not double-count. Lines belong to one transaction `uuid`. (Duplicate-ticket detection on import belongs to Phase 5.)
 
 **Example.** Leche 1 L: 1 Sep Chedraui 28.50 MXN, 12 Sep Walmart 26.00 MXN. The dossier names Walmart as the cheaper recent place and plots both dates.
 
@@ -487,10 +505,10 @@ The app does not call an LLM. No API keys.
 5. Paste JSON — raw JSON, fences, or surrounding text. No automatic clipboard read.
 6. Validate → preview → confirm. Nothing is written before confirm.
 
-- [ ] Records created this way are `source: ai_manual`.
-- [ ] Manual entry stays one tap away on the same form.
-- [ ] `ai_jobs` stores task, status, `prompt_hash`, `response_hash`.
-- [ ] A second paste with the same `response_hash` asks before creating another row.
+- [x] Records created this way are `source: ai_manual`.
+- [x] Manual entry stays one tap away on the same form. (The sparkle on a new expense opens the ticket flow; “Llenar a mano” returns to the form. Movimientos opens ticket or statement.)
+- [x] `ai_jobs` stores task, status, `prompt_hash`, `response_hash`.
+- [x] A second paste with the same `response_hash` asks before creating another row. (The hash is the JSON object, so fences and surrounding text do not hide a repeat.)
 
 ### JSON envelope
 
@@ -504,19 +522,19 @@ The app does not call an LLM. No API keys.
 }
 ```
 
-- [ ] Strip fences, take the first `{` through the last `}`, parse.
-- [ ] Reject a wrong `schema_version` or `task`.
-- [ ] Validate required fields and types. Errors are human-readable.
-- [ ] Repair loop copies a second prompt that includes the errors, the schema, and the bad JSON.
-- [ ] Confidence badges: cyan above 0.8, amber from 0.5 to 0.8, heat below 0.5. Below 0.6, highlight the weak fields.
-- [ ] Redaction warning before copy whenever the prompt contains amounts, merchants, or statement text.
+- [x] Strip fences, take the first `{` through the last `}`, parse.
+- [x] Reject a wrong `schema_version` or `task`.
+- [x] Validate required fields and types. Errors are human-readable.
+- [x] Repair loop copies a second prompt that includes the errors, the schema, and the bad JSON.
+- [x] Confidence badges: cyan above 0.8, amber from 0.5 to 0.8, heat below 0.5. Below 0.6, highlight the weak fields.
+- [x] Redaction warning before copy whenever the prompt contains amounts, merchants, or statement text.
 
 ### P0 tasks
 
-- [ ] `parse_receipt` — date, merchant, total, currency, payment method, last4, category, items, confidence. Total must be > 0. Date must be valid and not far in the future. Category must match the local list or become Uncategorized. A subcategory must match one under that category, or the row falls back to the parent. The model never creates a category or a subcategory. Item sum mismatch is a warning, not a block.
-- [ ] On confirm, each parsed line becomes a `transaction_line`. Merchant maps to a place. A new item or place is created only after that confirm. Unit price feeds the Phase 4 dossier when qty and unit are present.
-- [ ] `parse_bank_statement` — account name, period, closing balance, transactions. Dedupe on date + amount + description. Flag possible duplicates and recurring-bill matches. User confirms the import.
-- [ ] Preview lists exactly which balances will change.
+- [x] `parse_receipt` — date, merchant, total, currency, payment method, last4, category, items, confidence. Total must be > 0. Date must be valid and not far in the future (more than a week). Category must match the local list or become Uncategorized. A subcategory must match one under that category, or the row falls back to the parent. The model never creates a category or a subcategory. Item sum mismatch is a warning, not a block. last4 is shown and not stored.
+- [x] On confirm, each parsed line becomes a `transaction_line`. Merchant maps to a place. A new item or place is created only after that confirm. Unit price feeds the Phase 4 dossier when qty and unit are present.
+- [x] `parse_bank_statement` — account name, period, closing balance, transactions. Dedupe on date + amount + description. Flag possible duplicates and recurring-bill matches. User confirms the import. Exact duplicates start omitted. The closing balance is shown and never written over the account.
+- [x] Preview lists exactly which balances will change.
 
 **Done when:** A receipt JSON and a statement JSON can be pasted, repaired, previewed, and either committed or discarded, with the database unchanged until confirm.
 
@@ -574,7 +592,7 @@ Same six steps and the same envelope. Each task is a local template plus a valid
 - [ ] `parse_expense_text` — “Pagué 450 en Oxxo con tarjeta” prefills the expense form.
 - [ ] `categorize_transactions` — map existing rows to categories, preview, then apply.
 - [ ] `parse_income` — MXN amount and date from a deposit or payslip. Creating the income may offer the Phase 2 rule. The model does not run the rule.
-- [ ] `parse_cc_statement` — balance, due, minimum, transactions. Updates the card only after confirm, and refreshes CC reserve.
+- [ ] `parse_cc_statement` — balance, due, minimum, transactions, and MSI plans (purchase, months, charge). Matches plans to existing MSI purchases and asks before creating or changing one. Updates the card only after confirm, and refreshes CC reserve.
 
 ### P2
 
@@ -610,16 +628,21 @@ These are requirements, not later nice-to-haves. Cover them in the phase that ow
 - [x] User paid in another currency: enters the MXN that landed. No currency or exchange-rate field appears.
 - [x] Several cards: one combined reserve, separate due dates.
 - [ ] Card refund: lower card debt, do not book income.
+- [x] MSI paid early: card debt drops below the unbilled charges; the reserve stays at zero, never negative.
+- [ ] MSI purchase refunded or cancelled: the user edits or deletes the purchase; a partial refund on an MSI plan asks whether it shortens the plan.
+- [ ] Card cut day changes: MSI charges follow the new day. Reconcile against the statement if the bank kept the old schedule.
 - [x] Bucket withdrawal: reason and impact before write.
-- [ ] Model invents a merchant or amount: user still confirms.
-- [ ] Duplicate paste: same `response_hash` asks.
+- [x] Fijar saldo below the amount already reserved from liquid: refuse, and name that amount. Releasing it is Retirar.
+- [x] Fijar saldo on an apartado that sits in a savings account: Disponible real stays the same either way. The verb still sets the total instead of adding to it.
+- [x] Model invents a merchant or amount: user still confirms.
+- [x] Duplicate paste: same `response_hash` asks.
 - [ ] Negative expense amount: treat as a refund.
-- [ ] Unknown category: Uncategorized.
-- [ ] Unknown subcategory: keep the parent category. Do not create one without confirm.
+- [x] Unknown category: Uncategorized.
+- [x] Unknown subcategory: keep the parent category. Do not create one without confirm.
 - [x] Subcategory deleted with movements: ask, then move them to the parent. Parent totals do not change.
 - [x] Subcategory budget above the parent budget: warn. The parent limit still governs.
-- [ ] Partial JSON: repair loop, no partial write.
-- [ ] Sensitive prompt: warn before copy.
+- [x] Partial JSON: repair loop, no partial write.
+- [x] Sensitive prompt: warn before copy.
 - [ ] Share payload too big: offer `.guanabana`.
 - [ ] Bucket or settings conflict on import: always ask.
 - [ ] Item names almost match: ask, do not auto-merge.

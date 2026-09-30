@@ -13,12 +13,34 @@ export function isHeldInLiquid(bucket: Pick<SavingsBucket, 'account_id'>, accoun
   return !account || account.type !== 'savings'
 }
 
+/** Money recorded with Fijar saldo. It is part of the apartado and not part of the bank. */
+export function openingBalance(bucketId: string, moves: BucketMove[]): number {
+  return roundMoney(moves.filter((move) => move.bucket_id === bucketId && move.source === 'opening').reduce((sum, move) => sum + move.amount, 0))
+}
+
+/** The part reserved from bank, cash, or Saldo sin origen: Apartar, income rules, and moves between apartados. */
+export function reservedBalance(bucket: SavingsBucket, moves: BucketMove[]): number {
+  return roundMoney(bucketBalance(bucket, moves) - openingBalance(bucket.uuid, moves))
+}
+
 export function bucketsInLiquid(buckets: SavingsBucket[], moves: BucketMove[], accounts: Account[]): number {
   return roundMoney(
     buckets
       .filter((bucket) => isHeldInLiquid(bucket, accounts))
-      .reduce((sum, bucket) => sum + Math.max(0, bucketBalance(bucket, moves)), 0),
+      .reduce((sum, bucket) => sum + Math.max(0, reservedBalance(bucket, moves)), 0),
   )
+}
+
+/** Gap to append as one opening move. Refuses a total under the reserved part. */
+export function fijarGap(balance: number, reserved: number, nextTotal: number): { gap: number } | { error: 'below_reserved' } {
+  if (nextTotal < reserved) return { error: 'below_reserved' }
+  return { gap: roundMoney(nextTotal - balance) }
+}
+
+/** Reserved pesos are released first. Only what remains comes out of the opening part. */
+export function withdrawSplit(reserved: number, amount: number): { fromReserved: number; fromOpening: number } {
+  const fromReserved = roundMoney(Math.min(Math.max(0, reserved), amount))
+  return { fromReserved, fromOpening: roundMoney(amount - fromReserved) }
 }
 
 export function incomeEventsUntil(recurring: RecurringItem[], today: Date, until: Date): number {
@@ -60,7 +82,7 @@ export function setAsideThisCycle(bucket: SavingsBucket, moves: BucketMove[], re
   const from = dateToIso(since)
   const cycleMoves = moves.filter((move) => move.bucket_id === bucket.uuid && move.date >= from)
   const amount = cycleMoves
-    .filter((move) => move.amount > 0 && move.source !== 'bucket_transfer' && !move.reverses_id)
+    .filter((move) => move.amount > 0 && move.source !== 'bucket_transfer' && move.source !== 'opening' && !move.reverses_id)
     .reduce((sum, move) => sum + move.amount, 0)
   const startBalance = bucketBalance(bucket, moves) - cycleMoves.reduce((sum, move) => sum + move.amount, 0)
   const dayBefore = new Date(since.getFullYear(), since.getMonth(), since.getDate() - 1, 12)

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { isEditable, MOVEMENT_VIEWS, type EditableTransaction, type MovementView } from '../app/navigation'
+import { AiBridge } from '../components/AiBridge'
 import { FooterHint, Panel, Rail } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import { deleteTransaction, LedgerBlockedError } from '../db/ledger'
@@ -9,8 +10,10 @@ import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { isoToDate } from '../lib/dates'
 import { formatDate, formatMoney } from '../lib/format'
 import { categoryLabel, matchesCategory } from '../lib/categories'
+import { isMsi } from '../lib/msi'
 import { inRange, rangeLabel, spendMethod, type ExpenseFocus, type StatsWindow } from '../lib/stats'
 import { Estadisticas } from './Estadisticas'
+import { Precios } from './Precios'
 
 type MethodFilter = 'all' | 'bank' | 'cash' | 'credit_card'
 
@@ -29,11 +32,7 @@ const TYPE_LABEL: Record<Transaction['type'], string> = {
   adjustment: 'Ajuste',
 }
 
-const EMPTY_HINT: Record<MovementView, string> = {
-  list: 'Aún no hay movimientos. Usa Agregar para registrar el primero.',
-  stats: 'Las estadísticas aparecen cuando registres gastos.',
-  prices: 'Los precios aparecen cuando agregues productos a un gasto.',
-}
+const EMPTY_LIST = 'Aún no hay movimientos. Usa Agregar para registrar el primero.'
 
 function describe(tx: Transaction, data: MoneyData) {
   const account = (id: string | null) => data.accounts.find((a) => a.uuid === id)?.name ?? '—'
@@ -143,6 +142,9 @@ function TransactionList({
             )}
             {rows.map((tx) => {
               const row = describe(tx, data)
+              const sub = [isMsi(tx) ? `${tx.msi_months} MSI` : null, data.places.find((p) => p.uuid === tx.place_id)?.name, tx.notes]
+                .filter(Boolean)
+                .join(' · ')
               return (
                 <tr
                   key={tx.uuid}
@@ -158,7 +160,7 @@ function TransactionList({
                   <td className="mono dim">{formatDate(isoToDate(tx.date))}</td>
                   <td>
                     {row.concept}
-                    {tx.notes && <span className="row-sub">{tx.notes}</span>}
+                    {sub && <span className="row-sub">{sub}</span>}
                   </td>
                   <td className="dim">{row.source}</td>
                   <td className={`num mono${row.signed > 0 ? ' text-cyan' : ''}`}>
@@ -209,7 +211,7 @@ function TransactionList({
               ? 'Eliminar revierte la transferencia y regresa el dinero al apartado.'
               : 'Eliminar revierte el saldo de la cuenta o tarjeta.'
           : rows.length === 0
-            ? EMPTY_HINT.list
+            ? EMPTY_LIST
             : 'Toca un movimiento para ver acciones.'}
       </FooterHint>
     </>
@@ -218,15 +220,31 @@ function TransactionList({
 
 export function Movimientos({ onEdit }: { onEdit: (tx: EditableTransaction) => void }) {
   const [view, setView] = useState<MovementView>('list')
+  const [bridge, setBridge] = useState(false)
   const [focus, setFocus] = useState<ExpenseFocus | null>(null)
   const [span, setSpan] = useState<StatsWindow>('month')
   const data = useMoneyData()
   const header = (
     <>
-      <StageHeader title="Movimientos" aiBridge share />
+      <StageHeader title="Movimientos" aiBridge share onAi={() => setBridge(true)} />
       <Rail label="Vista" items={MOVEMENT_VIEWS} active={view} onSelect={(next) => { setView(next); setFocus(null) }} />
     </>
   )
+
+  if (data.loaded && bridge) {
+    return (
+      <div className="stage-grid stage-grid--single">
+        <div className="stage-main stage-narrow">
+          {header}
+          <Panel title="Guanabana IA">
+            <AiBridge task={null} data={data} onClose={() => setBridge(false)} onDone={() => setBridge(false)} />
+          </Panel>
+        </div>
+      </div>
+    )
+  }
+
+  if (data.loaded && view === 'prices') return <Precios header={header} data={data} />
 
   if (data.loaded && view === 'stats') {
     return <Estadisticas header={header} data={data} span={span} onSpan={setSpan} onFocus={(next) => { setFocus(next); setView('list') }} />
@@ -236,13 +254,7 @@ export function Movimientos({ onEdit }: { onEdit: (tx: EditableTransaction) => v
     <div className="stage-grid stage-grid--single">
       <div className="stage-main">
         {header}
-        {!data.loaded ? null : view === 'list' ? (
-          <TransactionList data={data} onEdit={onEdit} focus={focus} onClearFocus={() => { setFocus(null); setView('stats') }} />
-        ) : (
-          <Panel>
-            <FooterHint>{EMPTY_HINT[view]}</FooterHint>
-          </Panel>
-        )}
+        {data.loaded && <TransactionList data={data} onEdit={onEdit} focus={focus} onClearFocus={() => { setFocus(null); setView('stats') }} />}
       </div>
     </div>
   )

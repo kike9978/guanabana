@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Account, BucketMove, RecurringItem, SavingsBucket } from '../db/types'
-import { bucketBalance, bucketHistory, bucketsInLiquid, incomeEventsUntil, isHeldInLiquid, setAsideThisCycle, targetPace } from './buckets'
+import { bucketBalance, bucketHistory, bucketsInLiquid, fijarGap, incomeEventsUntil, isHeldInLiquid, openingBalance, reservedBalance, setAsideThisCycle, targetPace, withdrawSplit } from './buckets'
 import { computeRealAvailable } from './realAvailable'
 
 const stamp = '2026-09-01T00:00:00.000Z'
@@ -62,6 +62,21 @@ describe('buckets', () => {
 
   test('a negative bucket never adds to Real Available', () => {
     expect(bucketsInLiquid([emergency], [move('emergency', -100, '2026-09-01')], [bank])).toBe(0)
+  })
+
+  test('opening money counts in the apartado and not in Real Available', () => {
+    const opening = { ...move('emergency', 6000, '2026-09-03'), source: 'opening' as const }
+    const all = [...moves, opening]
+    expect(bucketBalance(emergency, all)).toBe(8500)
+    expect(openingBalance(emergency.uuid, all)).toBe(6000)
+    expect(reservedBalance(emergency, all)).toBe(2500)
+    expect(bucketsInLiquid([emergency], all, [bank])).toBe(2500)
+    expect(fijarGap(8500, 2500, 9000)).toEqual({ gap: 500 })
+    expect(fijarGap(8500, 2500, 2000)).toEqual({ error: 'below_reserved' })
+    expect(fijarGap(8500, 2500, 2500)).toEqual({ gap: -6000 })
+    expect(withdrawSplit(2500, 3000)).toEqual({ fromReserved: 2500, fromOpening: 500 })
+    expect(withdrawSplit(0, 400)).toEqual({ fromReserved: 0, fromOpening: 400 })
+    expect(bucketsInLiquid([retirement], [{ ...move('retirement', 1000, '2026-09-01'), source: 'opening' }], [savings])).toBe(0)
   })
 
   test('history is newest first', () => {
