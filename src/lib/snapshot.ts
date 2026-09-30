@@ -12,7 +12,7 @@ export interface MoneySnapshot {
 
 export function moneySnapshot(data: MoneyData, today: Date): MoneySnapshot {
   const cycle = incomeCycle(data.recurring, today)
-  const bills = billCommitments(data.recurring, data.transactions, cycle, today)
+  const bills = billCommitments(data.recurring, data.transactions, cycle, today, data.overrides)
   const loans = loanCommitments(data.loans, data.installments, data.transactions, cycle.end, today)
 
   return {

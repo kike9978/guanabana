@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import type { Category, RecurringItem, SavingsBucket, Transaction } from '../db/types'
-import { customShares, fitInOrder, incomeRank, isRuleIncome, planFirstIncome, planSecondIncome, scheduledIncomeMatches } from './incomeRules'
+import type { BucketMove, Category, RecurringItem, SavingsBucket, Transaction } from '../db/types'
+import { incomeCycle } from './cycle'
+import {
+  customShares,
+  fitInOrder,
+  incomeRank,
+  isRuleIncome,
+  pendingRuleIncomes,
+  planFirstIncome,
+  planSecondIncome,
+  scheduledIncomeMatches,
+} from './incomeRules'
 
 const stamp = '2026-09-01T00:00:00.000Z'
 
@@ -119,5 +129,44 @@ describe('scheduled income link', () => {
 
   test('ignores paydays far from the date', () => {
     expect(scheduledIncomeMatches([slot('mid', 15)], [], '2026-09-01')).toEqual([])
+  })
+})
+
+describe('pending rule prompt', () => {
+  const today = new Date(2026, 8, 17, 12)
+  const cycle = incomeCycle(slots, today)
+  const tx = (uuid: string, date: string, fields: Partial<Transaction> = {}) =>
+    ({ uuid, updated_at: stamp, type: 'income', date, amount: 20000, category_id: 'main', ...fields }) as Transaction
+  const move = (income_tx_id: string, source: BucketMove['source']) =>
+    ({ uuid: `m-${income_tx_id}`, updated_at: stamp, bucket_id: 'b', amount: 1000, date: '2026-09-15', reason: '', source, income_tx_id }) as BucketMove
+  const pending = (txs: Transaction[], moves: BucketMove[] = [], dismissed: string | null = null) =>
+    pendingRuleIncomes(txs, [main, repay], slots, moves, cycle, dismissed, today).map((p) => [p.income.uuid, p.rule])
+
+  test('a main income in this cycle without its rule shows, with its slot', () => {
+    expect(pending([tx('a', '2026-09-15')])).toEqual([['a', 'first']])
+  })
+
+  test('an income paid a couple of days before the payday still counts', () => {
+    expect(pending([tx('a', '2026-09-13')])).toEqual([['a', 'first']])
+  })
+
+  test('earlier cycles, future dates, and other income types stay out', () => {
+    expect(pending([tx('old', '2026-08-31'), tx('later', '2026-09-20'), tx('repay', '2026-09-15', { category_id: 'repay' })])).toEqual([])
+  })
+
+  test('the prompt clears once the matching rule has moves', () => {
+    expect(pending([tx('a', '2026-09-15')], [move('a', 'first_income')])).toEqual([])
+    expect(pending([tx('a', '2026-09-15')], [move('a', 'manual')])).toEqual([['a', 'first']])
+  })
+
+  test('Ahora no hides incomes up to that day, and a later income shows again', () => {
+    expect(pending([tx('a', '2026-09-15')], [], '2026-09-16')).toEqual([])
+    expect(pending([tx('a', '2026-09-15'), tx('b', '2026-09-17')], [], '2026-09-16')).toEqual([['b', 'first']])
+  })
+
+  test('without a schedule it looks back 15 days and leaves the rule to the user', () => {
+    const open = incomeCycle([], today)
+    const result = pendingRuleIncomes([tx('a', '2026-09-05'), tx('b', '2026-09-01')], [main], [], [], open, null, today)
+    expect(result.map((p) => [p.income.uuid, p.rule])).toEqual([['a', null]])
   })
 })

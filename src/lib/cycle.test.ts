@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
-import { billCommitments, incomeCycle, loanCommitments } from './cycle'
+import { scheduledMonthlyIncome } from './budgets'
+import { billCommitments, incomeCycle, itemOccurrences, loanCommitments, nextOccurrences } from './cycle'
+import { dateToIso } from './dates'
+import { incomeRank } from './incomeRules'
 import { buildSchedule, summarizeLoan } from './loans'
+import { repeatLabel, startChoices } from './repeat'
 
 const base = { updated_at: '2026-09-01T00:00:00.000Z' }
 
@@ -55,10 +59,98 @@ describe('billCommitments', () => {
     expect(billCommitments([recurring({ due_day: 20, start_date: '2026-09-25' })], [], cycle, today)).toEqual([])
   })
 
+  test('an adjusted occurrence reserves its own amount, and 0 reserves nothing', () => {
+    const adjust = (amount: number) => [{ ...base, uuid: 'o', recurring_id: 'r', occurrence: '2026-10-01', amount }]
+    expect(billCommitments([recurring({ due_day: 1 })], [], cycle, today, adjust(9100)).map((c) => c.amount)).toEqual([9100])
+    expect(billCommitments([recurring({ due_day: 1 })], [], cycle, today, adjust(0))).toEqual([])
+  })
+
+  test('a bill without a usual amount reserves only the adjusted date', () => {
+    const variable = recurring({ due_day: 1, amount: null })
+    expect(billCommitments([variable], [], cycle, today)).toEqual([])
+    const adjusted = [{ ...base, uuid: 'o', recurring_id: 'r', occurrence: '2026-10-01', amount: 1340 }]
+    expect(billCommitments([variable], [], cycle, today, adjusted).map((c) => c.amount)).toEqual([1340])
+  })
+
   test('an unpaid bill earlier in the cycle stays reserved as overdue', () => {
     const items = billCommitments([recurring({ due_day: 20 })], [], cycle, today)
     expect(items).toHaveLength(1)
     expect(items[0].overdue).toBe(true)
+  })
+})
+
+describe('repeat rules', () => {
+  const iso = (dates: Date[]) => dates.map(dateToIso)
+  const fridays = recurring({ frequency: 'weekly', interval: 1, start_date: '2026-10-02' })
+  const everyOther = recurring({ frequency: 'weekly', interval: 2, start_date: '2026-10-09' })
+
+  test('weekly runs on the weekday of its start, both ways', () => {
+    expect(iso(itemOccurrences(fridays, new Date(2026, 8, 20, 12), new Date(2026, 9, 10, 12)))).toEqual([
+      '2026-09-25',
+      '2026-10-02',
+      '2026-10-09',
+    ])
+  })
+
+  test('every 2 weeks keeps the phase of its start date', () => {
+    expect(iso(itemOccurrences(everyOther, new Date(2026, 8, 1, 12), new Date(2026, 9, 31, 12)))).toEqual([
+      '2026-09-11',
+      '2026-09-25',
+      '2026-10-09',
+      '2026-10-23',
+    ])
+  })
+
+  test('every 2 months counts months from the start and clamps day 31', () => {
+    const cfe = recurring({ frequency: 'monthly', interval: 2, due_day: 31, start_date: '2026-10-31' })
+    expect(iso(itemOccurrences(cfe, new Date(2026, 9, 1, 12), new Date(2027, 3, 1, 12)))).toEqual(['2026-10-31', '2026-12-31', '2027-02-28'])
+  })
+
+  test('next occurrences never fall before the start date', () => {
+    expect(iso(nextOccurrences(everyOther, new Date(2026, 8, 30, 12), 2))).toEqual(['2026-10-09', '2026-10-23'])
+  })
+
+  test('a weekly bill can reserve twice in one cycle', () => {
+    const cycle = incomeCycle([recurring({ uuid: 'i', type: 'income', due_day: 15 })], today)
+    const weeklyBill = recurring({ frequency: 'weekly', interval: 1, start_date: '2026-09-04', amount: 500 })
+    expect(billCommitments([weeklyBill], [], cycle, today).map((c) => c.occurrence)).toEqual([
+      '2026-09-18',
+      '2026-09-25',
+      '2026-10-02',
+      '2026-10-09',
+    ])
+  })
+
+  test('a weekly income makes a one-week cycle', () => {
+    const pay = recurring({ uuid: 'p', type: 'income', frequency: 'weekly', interval: 1, start_date: '2026-09-04' })
+    const cycle = incomeCycle([pay], today)
+    expect(dateToIso(cycle.start)).toBe('2026-09-25')
+    expect(dateToIso(cycle.end)).toBe('2026-10-02')
+  })
+
+  test('weekly paydays alternate 1st and 2nd from the first one', () => {
+    const pay = recurring({ uuid: 'p', type: 'income', frequency: 'weekly', interval: 1, start_date: '2026-09-04' })
+    const income = (date: string, occurrence?: string) => ({ type: 'income' as const, date, category_id: null, recurring_id: occurrence ? 'p' : null, occurrence })
+    expect(incomeRank(income('2026-09-04'), [pay])).toBe('first')
+    expect(incomeRank(income('2026-09-11'), [pay])).toBe('second')
+    expect(incomeRank(income('2026-09-19'), [pay])).toBe('first')
+    expect(incomeRank(income('2026-09-26', '2026-09-25'), [pay])).toBe('second')
+  })
+
+  test('the monthly income average uses paydays per year', () => {
+    const pay = recurring({ type: 'income', amount: 1200, frequency: 'weekly', interval: 2, start_date: '2026-09-04' })
+    expect(scheduledMonthlyIncome([pay])).toBe(2600)
+    expect(scheduledMonthlyIncome([recurring({ type: 'income', amount: 1200 })])).toBe(1200)
+  })
+
+  test('labels and start choices read the rule in words', () => {
+    expect(repeatLabel(fridays)).toBe('Cada viernes')
+    expect(repeatLabel(everyOther)).toBe('Cada 2 viernes')
+    expect(repeatLabel(recurring({ due_day: 15 }))).toBe('Día 15 de cada mes')
+    expect(repeatLabel(recurring({ due_day: 31 }))).toBe('Último día de cada mes')
+    expect(repeatLabel(recurring({ frequency: 'monthly', interval: 2, due_day: 10, start_date: '2026-10-10' }))).toBe('Cada 2 meses · día 10')
+    expect(iso(startChoices('w2', 5, 1, new Date(2026, 8, 30, 12)))).toEqual(['2026-10-02', '2026-10-09'])
+    expect(iso(startChoices('m2', 0, 10, new Date(2026, 8, 30, 12)))).toEqual(['2026-10-10', '2026-11-10'])
   })
 })
 

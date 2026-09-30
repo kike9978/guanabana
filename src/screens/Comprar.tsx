@@ -7,7 +7,7 @@ import type { ProjectionScenario } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { useRecords } from '../db/useRecords'
 import { bucketsInLiquid } from '../lib/buckets'
-import { expectedIncome, monthKey } from '../lib/budgets'
+import { scheduledMonthlyIncome } from '../lib/budgets'
 import { isoToDate, todayIso } from '../lib/dates'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { roundMoney } from '../lib/money'
@@ -47,8 +47,7 @@ function toneClass(value: number): string {
 export function Comprar({ data, header }: { data: MoneyData; header: ReactNode }) {
   const today = new Date()
   const saved = useRecords<ProjectionScenario>('projection_scenarios') ?? []
-  const baseMonthly = expectedIncome(data.recurring, [], monthKey(today))
-  const scheduledMonthly = baseMonthly.source === 'schedule' ? baseMonthly.amount : 0
+  const scheduledMonthly = scheduledMonthlyIncome(data.recurring)
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso())
   const [cardId, setCardId] = useState('')

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
+import { AdjustOccurrenceForm, adjustedNote, canAdjust } from '../components/AdjustOccurrenceForm'
 import { FooterHint, Panel } from '../components/hud'
 import { StageHeader } from '../components/StageHeader'
 import { useMoneyData } from '../db/useMoneyData'
@@ -40,6 +41,7 @@ export function Tiempo({
   const data = useMoneyData()
   const [offset, setOffset] = useState(0)
   const [selectedDay, setSelectedDay] = useState(today.getDate())
+  const [adjusting, setAdjusting] = useState<string | null>(null)
   const month = new Date(today.getFullYear(), today.getMonth() + offset, 1)
   const isCurrentMonth = offset === 0
   const cells = monthCells(month)
@@ -166,16 +168,27 @@ export function Tiempo({
                     <span>
                       {event.label}
                       <span className="row-sub">
-                        {KIND_LABEL[event.kind]}
-                        {event.paid && ' · Registrado'}
+                        {[KIND_LABEL[event.kind], event.paid ? 'Registrado' : adjustedNote(event)].filter(Boolean).join(' · ')}
                       </span>
                     </span>
                     <span className={`mono${event.paid ? ' dim' : ''}`}>{event.amount === null ? '—' : formatMoney(event.amount, 'MXN')}</span>
                   </div>
-                  {event.action && !event.paid && (
-                    <button type="button" className="panel-verb" onClick={() => onAdd(event.action!.type, event.action!.prefill)}>
-                      {event.action.type === 'income' ? 'Registrar ingreso' : 'Registrar pago'}
-                    </button>
+                  {adjusting === event.key ? (
+                    <AdjustOccurrenceForm key={event.key} data={data} event={event} onDone={() => setAdjusting(null)} />
+                  ) : (
+                    event.action &&
+                    !event.paid && (
+                      <span className="panel-verbs">
+                        <button type="button" className="panel-verb" onClick={() => onAdd(event.action!.type, event.action!.prefill)}>
+                          {event.action.type === 'income' ? 'Registrar ingreso' : 'Registrar pago'}
+                        </button>
+                        {canAdjust(event, today) && (
+                          <button type="button" className="panel-verb" onClick={() => setAdjusting(event.key)}>
+                            Ajustar este pago
+                          </button>
+                        )}
+                      </span>
+                    )
                   )}
                 </div>
               ))}

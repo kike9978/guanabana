@@ -91,16 +91,30 @@ export interface BucketMove extends BaseRecord {
   reverses_id?: string | null
 }
 
+export type RepeatFrequency = 'monthly' | 'weekly'
+
 export interface RecurringItem extends BaseRecord {
   name: string
   type: 'bill' | 'income'
   amount: number | null
+  /** Missing on rows saved before repeat rules: read as monthly, every 1. */
+  frequency?: RepeatFrequency
+  /** Months (1, 2, 3, 6, 12) or weeks (1–4) between occurrences, counted from `start_date`. */
+  interval?: number
+  /** Monthly only. Weekly items fall on the weekday of `start_date`. */
   due_day: number
   account_id: string | null
   cc_id?: string | null
   category_id: string | null
   start_date: string
   active: boolean
+}
+
+/** A different reserve for one occurrence. It never writes a transaction; the registered payment stays the record. */
+export interface RecurringOverride extends BaseRecord {
+  recurring_id: string
+  occurrence: string
+  amount: number
 }
 
 export type LoanDirection = 'borrowed' | 'lent'
@@ -208,6 +222,7 @@ export interface ProjectionScenario extends BaseRecord {
 export interface Settings extends BaseRecord {
   buffer_mxn: number
   cash_reviewed_at?: string | null
+  rule_prompt_dismissed_at?: string | null
   first_income_rule: { target_bucket: 'emergency' }
   second_income_rule: { retirement_pct: number; travel_mxn: number }
 }

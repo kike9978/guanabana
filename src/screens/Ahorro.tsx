@@ -40,7 +40,7 @@ import {
 } from '../lib/buckets'
 import { isoToDate } from '../lib/dates'
 import { pickValid } from '../lib/forms'
-import { incomeRank, isRuleIncome, ruleMoves, type IncomeRule } from '../lib/incomeRules'
+import { incomeRank, isRuleIncome, RULE_LABEL, ruleApplied, ruleMoves } from '../lib/incomeRules'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
 import { roundMoney } from '../lib/money'
 import { parseAmount } from '../lib/parseAmount'
@@ -768,8 +768,6 @@ function BucketDossier({ bucket, data, onClose }: { bucket: SavingsBucket; data:
   )
 }
 
-const RULE_LABEL: Record<IncomeRule, string> = { first: '1er ingreso', second: '2º ingreso' }
-const RULE_SOURCE = { first: 'first_income', second: 'second_income' } as const
 const RULES_WINDOW_DAYS = 62
 
 function RulesPanel({ data, onAdd }: { data: MoneyData; onAdd: (type: AddType, prefill?: AddPrefill) => void }) {
@@ -804,7 +802,7 @@ function RulesPanel({ data, onAdd }: { data: MoneyData; onAdd: (type: AddType, p
             {incomes.map((tx) => {
               const rule = incomeRank(tx, data.recurring)
               const moves = ruleMoves(tx.uuid, data.bucketMoves)
-              const applied = rule ? moves.some((move) => move.source === RULE_SOURCE[rule]) : moves.length > 0
+              const applied = ruleApplied(tx.uuid, rule, data.bucketMoves)
               const moved = roundMoney(moves.reduce((sum, move) => sum + move.amount, 0))
               return (
                 <tr key={tx.uuid}>

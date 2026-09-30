@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import type { AddPrefill, AddType, SubScreen } from '../app/navigation'
 import { FooterHint, Panel, Rail, StatBar } from '../components/hud'
+import { AdjustOccurrenceForm, adjustedNote, canAdjust } from '../components/AdjustOccurrenceForm'
 import { OpeningBalancePanel } from '../components/OpeningBalancePanel'
 import { StageHeader } from '../components/StageHeader'
 import { findOpeningAccount, isLiquid } from '../db/accounts'
@@ -10,6 +11,7 @@ import type { Account } from '../db/types'
 import { useMoneyData, type MoneyData } from '../db/useMoneyData'
 import { bucketBalance } from '../lib/buckets'
 import { daysBetween, isoToDate, todayIso } from '../lib/dates'
+import { pendingRuleIncomes, RULE_LABEL, type PendingRule } from '../lib/incomeRules'
 import { cashReviewDue, type CashReview } from '../lib/reconcile'
 import { ReconcileForm } from './Cuentas'
 import { formatAmount, formatDate, formatMoney } from '../lib/format'
@@ -82,6 +84,58 @@ function CashReviewPanel({ review, data, onAdd }: { review: CashReview; data: Mo
   )
 }
 
+function PendingRulePanel({
+  pending,
+  data,
+  onAdd,
+}: {
+  pending: PendingRule[]
+  data: MoneyData
+  onAdd: (type: AddType, prefill?: AddPrefill) => void
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const dismiss = async () => {
+    if (data.settings) await updateSettings(data.settings, { rule_prompt_dismissed_at: todayIso() })
+  }
+
+  return (
+    <Panel title="Regla pendiente">
+      <table className="roster">
+        <tbody>
+          {pending.map(({ income, rule }) => (
+            <tr key={income.uuid}>
+              <td className="mono dim">{formatDate(isoToDate(income.date))}</td>
+              <td>{rule ? RULE_LABEL[rule] : 'Elige la regla'}</td>
+              <td className="num mono">{formatMoney(income.amount, 'MXN')}</td>
+              <td className="num">
+                <button
+                  type="button"
+                  className="panel-verb"
+                  onClick={() => onAdd('savings_rule', { income_tx_id: income.uuid, ...(rule ? { rule } : {}) })}
+                >
+                  Aplicar
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="verb-row">
+        <button type="button" className="verb-button" onClick={() => dismiss().catch(() => setError('No se pudo guardar. Intenta de nuevo.'))}>
+          <span className="key-glyph">N</span>
+          Ahora no
+        </button>
+      </div>
+      <FooterHint>
+        {pending.length === 1
+          ? `Tu ingreso del ${formatDate(isoToDate(pending[0].income.date))} aún no tiene regla. Puedes aplicarla después desde Ahorro.`
+          : 'Estos ingresos aún no tienen regla. Puedes aplicarlas después desde Ahorro.'}
+      </FooterHint>
+      {error && <FieldError>{error}</FieldError>}
+    </Panel>
+  )
+}
+
 export function Inicio({
   onAdd,
   onOpenScreen,
@@ -93,6 +147,7 @@ export function Inicio({
 }) {
   const data = useMoneyData()
   const [selected, setSelected] = useState<string | null>(null)
+  const [adjusting, setAdjusting] = useState<string | null>(null)
   const accounts = data.accounts.filter((a) => !a.archived || a.current_balance !== 0)
   const cards = data.cards.filter((c) => !c.archived || c.current_balance !== 0)
   const now = new Date()
@@ -104,6 +159,17 @@ export function Inicio({
   const showOpening = data.loaded && (opening ? opening.current_balance !== 0 || !hasLiquidAccounts : !hasLiquidAccounts)
   const money = (value: number) => formatMoney(value, 'MXN')
   const cashReviews = data.loaded ? cashReviewDue(data.accounts, data.transactions, data.settings ?? null, today) : []
+  const pendingRules = data.loaded
+    ? pendingRuleIncomes(
+        data.transactions,
+        data.categories,
+        data.recurring,
+        data.bucketMoves,
+        cycle,
+        data.settings?.rule_prompt_dismissed_at,
+        today,
+      )
+    : []
 
   const overdueFrom = commitments.filter((item) => item.overdue).reduce((min, item) => (item.date < min ? item.date : min), cycle.start)
   const windowEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + UPCOMING_DAYS + 1)
@@ -179,6 +245,7 @@ export function Inicio({
           </button>
         </div>
         {showOpening && <OpeningBalancePanel key={opening?.updated_at ?? 'new'} opening={opening} />}
+        {pendingRules.length > 0 && <PendingRulePanel pending={pendingRules} data={data} onAdd={onAdd} />}
         {cashReviews.map((review) => (
           <CashReviewPanel key={review.account.uuid} review={review} data={data} onAdd={onAdd} />
         ))}
@@ -202,7 +269,9 @@ export function Inicio({
                         <td className="mono dim">{formatDate(event.date)}</td>
                         <td>
                           {event.label}
-                          <span className={`row-sub${days < 0 ? ' text-amber' : ''}`}>{whenLabel(days)}</span>
+                          <span className={`row-sub${days < 0 ? ' text-amber' : ''}`}>
+                            {[whenLabel(days), adjustedNote(event)].filter(Boolean).join(' · ')}
+                          </span>
                         </td>
                         <td className={`num mono${amountTone(event, days)}`}>{event.amount === null ? '—' : money(event.amount)}</td>
                       </tr>
@@ -210,7 +279,7 @@ export function Inicio({
                   })}
                 </tbody>
               </table>
-              {selectedEvent?.action && (
+              {selectedEvent?.action && adjusting !== selectedEvent.key && (
                 <div className="verb-row">
                   <button
                     type="button"
@@ -220,7 +289,16 @@ export function Inicio({
                     <span className="key-glyph">A</span>
                     {selectedEvent.action.type === 'income' ? 'Registrar ingreso' : 'Registrar pago'}
                   </button>
+                  {canAdjust(selectedEvent, today) && (
+                    <button type="button" className="verb-button" onClick={() => setAdjusting(selectedEvent.key)}>
+                      <span className="key-glyph">J</span>
+                      Ajustar este pago
+                    </button>
+                  )}
                 </div>
+              )}
+              {selectedEvent && adjusting === selectedEvent.key && (
+                <AdjustOccurrenceForm key={selectedEvent.key} data={data} event={selectedEvent} onDone={() => setAdjusting(null)} />
               )}
             </>
           )}

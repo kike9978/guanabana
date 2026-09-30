@@ -1,4 +1,4 @@
-import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
+import type { Loan, LoanInstallment, RecurringItem, RecurringOverride, Transaction } from '../db/types'
 import { dateToIso, daysBetween, isoToDate } from './dates'
 import { paidInstallmentIds } from './loans'
 
@@ -31,18 +31,78 @@ export function occurrencesBetween(day: number, from: Date, to: Date): Date[] {
   return result
 }
 
+export type RepeatFields = Pick<RecurringItem, 'frequency' | 'interval' | 'due_day' | 'start_date'>
+
+export function repeatOf(item: RepeatFields): { frequency: 'monthly' | 'weekly'; interval: number } {
+  return { frequency: item.frequency ?? 'monthly', interval: Math.max(1, item.interval ?? 1) }
+}
+
+export function isPlainMonthly(item: RepeatFields): boolean {
+  const { frequency, interval } = repeatOf(item)
+  return frequency === 'monthly' && interval === 1
+}
+
+export function occurrencesPerYear(item: RepeatFields): number {
+  const { frequency, interval } = repeatOf(item)
+  return frequency === 'weekly' ? 52 / interval : 12 / interval
+}
+
+function monthIndex(date: Date): number {
+  return date.getFullYear() * 12 + date.getMonth()
+}
+
+/**
+ * Dates in [from, to) that follow the item's repeat. The series runs in both directions from
+ * `start_date`, which only sets the phase; callers decide whether dates before it count.
+ */
+export function itemOccurrences(item: RepeatFields, from: Date, to: Date): Date[] {
+  const { frequency, interval } = repeatOf(item)
+  const start = noon(from)
+  const end = noon(to)
+  const anchor = isoToDate(item.start_date)
+  const result: Date[] = []
+
+  if (frequency === 'weekly') {
+    const step = 7 * interval
+    const offset = Math.ceil(daysBetween(anchor, start) / step)
+    for (let k = offset; ; k++) {
+      const date = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + k * step, 12)
+      if (date >= end) break
+      if (date >= start) result.push(date)
+    }
+    return result
+  }
+
+  if (interval === 1) return occurrencesBetween(item.due_day, from, to)
+  for (let m = monthIndex(start) - 1; m <= monthIndex(end); m++) {
+    if ((((m - monthIndex(anchor)) % interval) + interval) % interval !== 0) continue
+    const date = occurrenceIn(Math.floor(m / 12), m % 12, item.due_day)
+    if (date >= start && date < end) result.push(date)
+  }
+  return result
+}
+
+/** The next `count` occurrences on or after `from`, never before `start_date`. */
+export function nextOccurrences(item: RepeatFields, from: Date, count: number): Date[] {
+  const { frequency, interval } = repeatOf(item)
+  const floor = isoToDate(item.start_date) > noon(from) ? isoToDate(item.start_date) : noon(from)
+  const spanDays = (frequency === 'weekly' ? 7 * interval : 31 * interval) * (count + 1)
+  const to = new Date(floor.getFullYear(), floor.getMonth(), floor.getDate() + spanDays, 12)
+  return itemOccurrences(item, floor, to).slice(0, count)
+}
+
 export function incomeCycle(recurring: RecurringItem[], today: Date): IncomeCycle {
-  const days = recurring.filter((item) => item.active && item.type === 'income').map((item) => item.due_day)
+  const items = recurring.filter((item) => item.active && item.type === 'income')
   const now = noon(today)
 
-  if (days.length === 0) {
+  if (items.length === 0) {
     const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + FALLBACK_CYCLE_DAYS, 12)
     return { start: now, nextIncome: null, end, hasSchedule: false }
   }
 
   const back = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), 12)
   const ahead = new Date(now.getFullYear(), now.getMonth() + 2, now.getDate(), 12)
-  const dates = days.flatMap((day) => occurrencesBetween(day, back, ahead)).sort((a, b) => a.getTime() - b.getTime())
+  const dates = items.flatMap((item) => itemOccurrences(item, back, ahead)).sort((a, b) => a.getTime() - b.getTime())
   const previous = dates.filter((date) => date <= now).at(-1) ?? back
   const next = dates.find((date) => date > now) ?? ahead
   return { start: previous, nextIncome: next, end: next, hasSchedule: true }
@@ -69,32 +129,45 @@ export interface Commitment {
   accountId?: string | null
 }
 
+export function overrideIndex(overrides: RecurringOverride[]): Map<string, RecurringOverride> {
+  return new Map(overrides.map((row) => [`${row.recurring_id}|${row.occurrence}`, row]))
+}
+
+/** The reserve for one occurrence: its override if there is one, otherwise the item's usual amount. */
+export function occurrenceAmount(item: RecurringItem, occurrence: string, overrides: Map<string, RecurringOverride>): number | null {
+  return overrides.get(`${item.uuid}|${occurrence}`)?.amount ?? item.amount
+}
+
 export function billCommitments(
   recurring: RecurringItem[],
   transactions: Transaction[],
   cycle: IncomeCycle,
   today: Date,
+  overrides: RecurringOverride[] = [],
 ): Commitment[] {
   const paid = new Set(
     transactions.filter((tx) => tx.recurring_id && tx.occurrence).map((tx) => `${tx.recurring_id}|${tx.occurrence}`),
   )
+  const adjusted = overrideIndex(overrides)
   const now = noon(today)
 
   return recurring
-    .filter((item) => item.active && item.type === 'bill' && item.amount !== null && item.amount > 0)
+    .filter((item) => item.active && item.type === 'bill')
     .flatMap((item) =>
-      occurrencesBetween(item.due_day, cycle.start, cycle.end)
-        .filter((date) => dateToIso(date) >= item.start_date)
-        .filter((date) => !paid.has(`${item.uuid}|${dateToIso(date)}`))
-        .map<Commitment>((date) => ({
-          key: `${item.uuid}-${dateToIso(date)}`,
+      itemOccurrences(item, cycle.start, cycle.end)
+        .map((date) => ({ date, occurrence: dateToIso(date) }))
+        .filter(({ occurrence }) => occurrence >= item.start_date && !paid.has(`${item.uuid}|${occurrence}`))
+        .map(({ date, occurrence }) => ({ date, occurrence, amount: occurrenceAmount(item, occurrence, adjusted) ?? 0 }))
+        .filter(({ amount }) => amount > 0)
+        .map<Commitment>(({ date, occurrence, amount }) => ({
+          key: `${item.uuid}-${occurrence}`,
           kind: 'bill',
           date,
           label: item.name,
-          amount: item.amount ?? 0,
+          amount,
           overdue: date < now,
           recurringId: item.uuid,
-          occurrence: dateToIso(date),
+          occurrence,
           categoryId: item.category_id,
           accountId: item.account_id,
         })),

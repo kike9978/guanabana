@@ -15,6 +15,7 @@ import {
   isRuleIncome,
   planFirstIncome,
   planSecondIncome,
+  RULE_SOURCE,
   ruleMoves,
   type IncomeRule,
 } from '../../lib/incomeRules'
@@ -24,8 +25,6 @@ import { moneySnapshot } from '../../lib/snapshot'
 import type { AddFormProps } from './formProps'
 
 const RECENT_DAYS = 62
-
-const RULE_SOURCE = { first: 'first_income', second: 'second_income' } as const
 
 const money = (value: number) => formatMoney(value, 'MXN')
 

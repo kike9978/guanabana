@@ -1,6 +1,6 @@
 import type { Account, BucketMove, RecurringItem, SavingsBucket } from '../db/types'
 import { isLiquid } from './accounts'
-import { FALLBACK_CYCLE_DAYS, incomeCycle, occurrencesBetween } from './cycle'
+import { FALLBACK_CYCLE_DAYS, incomeCycle, itemOccurrences } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
 import { roundMoney } from './money'
 
@@ -95,9 +95,9 @@ export function incomeEventsUntil(recurring: RecurringItem[], today: Date, until
   const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1, 12)
   const end = new Date(until.getFullYear(), until.getMonth(), until.getDate() + 1, 12)
   if (end <= from) return 0
-  const days = recurring.filter((item) => item.active && item.type === 'income').map((item) => item.due_day)
-  if (days.length === 0) return Math.ceil(daysBetween(from, end) / FALLBACK_CYCLE_DAYS)
-  return days.reduce((sum, day) => sum + occurrencesBetween(day, from, end).length, 0)
+  const items = recurring.filter((item) => item.active && item.type === 'income')
+  if (items.length === 0) return Math.ceil(daysBetween(from, end) / FALLBACK_CYCLE_DAYS)
+  return items.reduce((sum, item) => sum + itemOccurrences(item, from, end).length, 0)
 }
 
 export interface TargetPace {

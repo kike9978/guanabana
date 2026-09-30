@@ -171,7 +171,7 @@ Short = max(0, Retirement + Travel − Real_Available)   (Real_Available after r
 
 The remainder subtracts money already in buckets and card debt, so a rule never reserves the same peso twice or treats owed money as leftover. Retirement is a share of the income, not of the whole balance. The share and the travel amount are settings, defaulting to 20% and 5,000 MXN.
 
-Which income is 1st or 2nd comes from the active recurring income items sorted by day: the earliest is the first income, the next one the second. An income linked to a recurring item uses that item. Otherwise it matches the nearest payday. With a single payday it is always the first income, and with no schedule the user picks the rule. Only the main income category (**Ingreso principal**) or a scheduled income triggers a rule. Loan repayments and other income never do.
+Which income is 1st or 2nd comes from the active recurring income items sorted by day: the earliest is the first income, the next one the second. An income linked to a recurring item uses that item. Otherwise it matches the nearest payday. With a single payday it is always the first income, and with no schedule the user picks the rule. When any main income repeats weekly, the scheduled main-income dates alternate 1st, 2nd, 1st… in date order, counting from the earliest `start_date`. Every 2 weeks then behaves like a quincena, and a weekly payday gets both rules each fortnight. Only the main income category (**Ingreso principal**) or a scheduled income triggers a rule. Loan repayments and other income never do.
 
 ---
 
@@ -188,13 +188,14 @@ Local SQLite (Capacitor) or IndexedDB (PWA). Export is encrypted JSON. Every dom
 | `items` | name, normalized_name, default_unit, category_id, barcode (optional, local only) |
 | `places` | name, kind (`supermarket` / `market` / `convenience` / `other`), area |
 | `credit_cards` | name, limit, current_balance, statement_day, due_day, payment_strategy (`full` / `statement` / `minimum`), statement_balance (optional), minimum_payment (optional), statement_date (the cut both belong to), archived |
-| `loans` | name, direction (`borrowed` / `lent`), lender_label (short, no full names), principal, currency, interest (`none` / `fixed_rate` / `fixed_installment`), rate_annual, installment_amount, frequency (`monthly` / `biweekly` / `per_income`), income_slot (`first` / `second` / `both`, only for `per_income`), first_due_date, installment_count, pay_from_account_id, status (`active` / `paid` / `paused`) |
+| `loans` | name, direction (`borrowed` / `lent`), lender_label (short, no full names), principal, currency, interest (`none` / `fixed_rate` / `fixed_installment`), rate_annual, installment_amount, frequency (`monthly` / `biweekly` / `per_income`), income_slot (`first` / `second` / `both`, only for `per_income`), first_due_date, installment_count, pay_from_account_id, status (`active` / `paid` / `paused` / `written_off`, lent only) |
 | `loan_installments` | loan_id, due_date, amount, principal_part, interest_part, status (`scheduled` / `skipped` / `settled` / `superseded`), created_by, replaced_by. Paid and late are derived: an installment is paid when a transaction carries its `loan_installment_id` (or it is `settled`, paid before tracking), and late when it is unpaid past its due date. `superseded` rows were replaced by an extra payment and stay for undo. |
 | `savings_buckets` | name, target, target_date (optional), sort_order, archived, rule_type (`emergency` / `retirement` / `travel` / `custom`), account_id (null = bank or cash; a savings account = outside liquid), income_share (custom only, optional: `{income: first / second / both, amount}`). Balance is derived from `bucket_moves`. |
 | `bucket_moves` | bucket_id, amount (signed), date, reason, source (`manual` / `opening` / `first_income` / `second_income` / `bucket_transfer`), income_tx_id, transfer_id (pairs the two moves of a bucket-to-bucket transfer), tx_id (the account transfer that funded it), reverses_id (a move that cancels another). `opening` is money already set aside outside liquid accounts. |
-| `recurring_items` | name, amount, due_day, account_id, cc_id (bills only: paid with a card), category_id, type (`bill` / `income`) |
+| `recurring_items` | name, amount, frequency (`monthly` / `weekly`, missing = monthly), interval (months 1, 2, 3, 6, 12, bills only above 1; weeks 1–4; missing = 1), due_day (`monthly` only), start_date (sets the phase of the interval; a weekly item falls on its weekday), account_id, cc_id (bills only: paid with a card), category_id, type (`bill` / `income`) |
+| `recurring_overrides` | recurring_id, occurrence (ISO date), amount (MXN, ≥ 0). One per occurrence. Changes that date's reserve only; the registered transaction stays the record of what was paid. |
 | `budgets` | category_id (a category or a subcategory), month (`YYYY-MM`, or null for every month), limit_mxn |
-| `settings` | buffer_mxn, cash_reviewed_at, first_income_rule, second_income_rule |
+| `settings` | buffer_mxn, cash_reviewed_at, rule_prompt_dismissed_at, first_income_rule, second_income_rule |
 | `projection_scenarios` | name, amount, date, card_id, msi_months, income_monthly, daily_spend, extra_expenses |
 | `ai_jobs` | task, status (`prompt_copied` / `json_pasted` / `validated` / `committed` / `failed`), prompt_hash, response_hash |
 | `share_events` | kind (`url` / `qr` / `file` / `p2p`), payload_hash |
@@ -212,6 +213,7 @@ AI jobs, share events, and bucket moves are append-only.
 | Categories, subcategories | Match `uuid`. Similar names, or the same name under another parent, never auto-merge. Show the diff and ask. |
 | Price lines | Match `uuid`. A line never changes Real Available by itself. |
 | Buckets | Never auto-overwrite. Show the diff and ask. |
+| Recurring overrides | Match `recurring_id` + `occurrence`. A different amount for the same date shows both and asks. Unknown ones are added. |
 | Settings | Never auto-overwrite. Ask. |
 | AI jobs, audit | Append only. |
 
@@ -280,11 +282,14 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Create a loan: name, borrowed or lent, principal, currency, installment amount or rate, frequency, first due date, number of installments, and the account that pays it.
 - [x] Generate the installment schedule locally. The user can edit any row before saving (dates always; amounts unless the loan uses an annual rate). Saving is blocked until the rows add up to the principal.
 - [x] Interest types: none (family loan), fixed installment (the bank quotes one amount), fixed annual rate (the app splits principal and interest).
-- [x] Frequency `per_income` ties an installment to the 1st or 2nd income event, not a calendar day. “Por ingreso” appears once there are income days; it follows the 1st, the 2nd, or every income (`income_slot`). Rows fall on those paydays from the “Desde” date, clamped to short months, and an annual rate splits by 12 or 24 periods. An installment on a payday is paid from that income, so it reserves from that day. The saved rows keep their dates if the income days change later.
+- [x] Frequency `per_income` ties an installment to the 1st or 2nd income event, not a calendar day. “Por ingreso” appears once there are income days; it follows the 1st, the 2nd, or every income (`income_slot`). Rows fall on those paydays from the “Desde” date, clamped to short months, and an annual rate splits by the number of matching paydays per year (12 or 24 for monthly paydays; 26 or 52 for weekly ones). An installment on a payday is paid from that income, so it reserves from that day. The saved rows keep their dates if the income days change later.
 - [x] Installments due before the next income reduce Disponible real. The rest of the principal does not.
 - [x] Mark an installment paid: **Pagar cuota** opens the prefilled expense form. The saved expense carries `loan_installment_id`, which lowers the remaining balance and moves on to the next installment.
 - [x] Extra payment: lowers the remaining principal and recomputes the payoff date or the installment count after confirm. **Abono extra** previews now vs. after (“Terminar antes” or “Bajar la cuota”). One write records the linked movement (`loan_extra_id`), marks the unpaid rows `superseded`, and adds the new rows. Deleting the movement restores the previous schedule, unless a new row was already paid.
 - [x] Lent money: a receivable roster. Expected repayments show on Tiempo, never in Disponible real until marked received (**Registrar cobro** opens the income form).
+- [ ] Lending moves the money out. Saving a “Me deben” loan with a “Se recibe en” account also writes one expense for the principal from that account (category `loan_disbursement`, “Préstamo otorgado”, linked by `loan_id`), in the same write as the loan. The form previews the change in Disponible real before confirm. With “Elegir al pagar”, the form asks for the account the money left from, or offers “Ya lo registré” for a loan that started before Guanabana. Deleting the loan asks whether to keep or delete that movement. Stats leave `loan_disbursement` out of spending.
+- [ ] Write off lent money: **Dar por perdido** in the dossier asks, then sets status `written_off`. The unpaid rows leave Tiempo, the collected amount stays, and no balance changes. The roster shows it dimmed with neutral copy.
+- [ ] The dossier copy follows direction: “Interés cobrado” and “Cuotas por cobrar” for lent money.
 - [x] Loan chip on Inicio: total owed. Next installment and payoff date are in the Préstamos roster.
 - [x] Loan dossier: remaining, paid so far, interest paid, installments left, payoff date, and a stat bar of progress.
 - [x] Installment due dates appear on Tiempo and in the next-14-days list next to bills and card due dates.
@@ -297,6 +302,37 @@ AI jobs, share events, and bucket moves are append-only.
 - [x] Registering a bill or income opens the prefilled form. The transaction carries `recurring_id` + `occurrence`, which marks that occurrence as done.
 - [x] Status strip meter shows progress toward the next income (“En N días”).
 - [x] Edit a recurring item, and income with an unknown amount (amount left empty).
+
+### Repeat rules
+
+Bills and income can repeat on a weekday or every few months, not only on one day of every month. Example: “Cada viernes”, “Cada 2 viernes”, “Cada 2 meses, día 10” (CFE), “Cada año, 31 ene” (predial). This changes only when occurrences fall. Each occurrence still reserves, registers, and projects exactly like a monthly one.
+
+- [ ] **Se repite** on the Pagos fijos form: Cada semana, Cada 2 semanas, Cada 3 semanas, Cada 4 semanas, Cada mes (default), Cada 2 meses, Cada 3 meses, Cada 6 meses, Cada año. Weekly options ask for the weekday. Monthly options keep **Día del mes**.
+- [ ] Every 2 to 4 weeks, and every 2 or more months, needs a starting point. The form offers the next matching dates (“¿Cuál viernes es el próximo? 2 oct · 9 oct”), or the next months for a monthly day, and saves the choice as `start_date`. Weeks and months are counted from that date.
+- [ ] A preview under the field lists the next three dates before saving.
+- [ ] The roster row says the rule in words: “Cada viernes”, “Cada 2 viernes · próximo 9 oct”, “Día 15 de cada mes”, “Cada 2 meses · día 10”. Day 29–31 clamps to short months and reads “Último día” when it is 31.
+- [ ] Income repeats weekly (every 1 to 4 weeks) or monthly only. Longer repeats are for bills, so an income cycle is never longer than a month.
+- [ ] One occurrence helper in `src/lib/cycle.ts` drives the income cycle, bill commitments, Tiempo, Próximos 14 días, and the projection. No second schedule path.
+- [ ] A weekly bill can fall more than once in a cycle. Every unpaid occurrence before the next income reserves, and each registers on its own (`occurrence` is the date).
+- [ ] Monthly income equivalent for sliders, scenarios, and budget percent = amount × occurrences per year ÷ 12 (weekly 52, every 2 weeks 26). The projection engine uses the real dates, so a month with five Fridays gets five paydays.
+- [ ] Pago programado matches within half the interval for weekly repeats (±3 days weekly, ±7 every 2 weeks) and keeps ±10 days for monthly.
+- [ ] Editing the repeat applies from the next occurrence. Registered occurrences keep their link. Before saving, the edit lists any overdue unregistered occurrence under the old rule and asks to register it first or let it go, and shows the change in Disponible real. It never drops a reserve without asking.
+- [ ] Existing rows read as `frequency: monthly`, `interval: 1`, so nothing moves on upgrade.
+- [ ] Loans paid **Por ingreso** follow weekly paydays too. Until then, “Por ingreso” only offers day-of-month paydays.
+
+### Adjust one occurrence
+
+Recurring items are never registered automatically. Each occurrence stays a reserve until the user opens it and saves the prefilled form. When one occurrence is known to differ (this month's CFE is 1,340, not 900), the user can change that reserve ahead of time without touching the item's usual amount.
+
+- [ ] **Ajustar este pago** on an unregistered bill occurrence from today on (Próximos 14 días and the Tiempo day panel) asks for the amount of that date only. It shows the usual amount, the new one, and the change in Disponible real before confirm.
+- [ ] Confirm writes one `recurring_overrides` row keyed by `recurring_id` + `occurrence`. It writes no transaction and moves no balance. Only the reserve for that date changes.
+- [ ] The override feeds the same commitment path: Bills_Before_Next_Income, Tiempo, Próximos 14 días, and the projection use it instead of the item amount. No second money path.
+- [ ] Registering that occurrence prefills the form with the override. The saved amount is still what the user types.
+- [ ] An item without a usual amount can get an override, so one occurrence of a variable bill reserves while the others do not.
+- [ ] Rows with an override show both amounts (“1,340 MXN · normalmente 900”). **Quitar ajuste** restores the usual amount after the same preview.
+- [ ] An override of 0 is allowed and reads “Sin cargo este periodo”. It reserves nothing and stays pending until registered or the ajuste is removed.
+- [ ] Editing the item's usual amount never changes existing overrides. Editing its repeat lists overrides on dates that no longer occur and asks before dropping them.
+- [ ] Past or registered occurrences cannot be adjusted. The registered movement is the record.
 
 ### Transactions
 
@@ -405,6 +441,11 @@ Apartar reserves pesos that already sit in Banco, Efectivo, or Saldo sin origen,
 - [x] Ahorro lists recent main incomes with their rule, what was moved, or **Sin aplicar** with an Aplicar verb. Skipping writes nothing, so a skipped income can be applied later.
 - [x] The same rule cannot run twice on one income. A second attempt shows what it already moved.
 - [x] **Regla de ahorro** in the add menu picks any recent income and either rule, for one payday a month or no schedule.
+- [ ] **Regla pendiente** on Inicio: a main income in the current cycle that could run a rule and has none applied shows one row with the income, its date, and the rule (1er or 2º ingreso). Same panel pattern as Revisión de efectivo.
+- [ ] **Aplicar** opens the rule wizard for that income. The wizard is unchanged: reconcile, editable amounts, confirm. The prompt itself never writes a move.
+- [ ] **Ahora no** hides the prompt until the next payday by saving `settings.rule_prompt_dismissed_at`. It writes no bucket move, so the income stays **Sin aplicar** in Ahorro and can still be applied from there or from the add menu.
+- [ ] The prompt clears on its own once the rule runs, or when the income is edited out of the main income category or deleted. An income from an earlier cycle does not show on Inicio; it stays in the Ahorro history.
+- [ ] Copy is neutral: “Tu ingreso del 15 sep aún no tiene regla.” No count of skipped incomes, no warning color.
 
 ### Reconciliation
 
@@ -637,7 +678,7 @@ Ship only what is still needed after Phases 0–7.
 - [ ] On-device receipt OCR as a fallback that still lands in the same preview. No network model.
 - [ ] CSV import through the same diff screen as statements.
 - [ ] Home-screen widget for Disponible real, if the shell supports it.
-- [ ] Recurring detection suggestions. They never auto-create bills.
+- [ ] Recurring detection suggestions, including the repeat (“parece cada 2 viernes”). They never auto-create bills.
 - [ ] Passcode and biometric lock.
 - [ ] P2P sync only if file + URL + QR are not enough: WebRTC data channel, manual signaling via fragment or QR, encrypted payloads, merge on `uuid` + `updated_at`. Not part of v1 acceptance.
 
@@ -648,6 +689,7 @@ Ship only what is still needed after Phases 0–7.
 These are requirements, not later nice-to-haves. Cover them in the phase that owns the math.
 
 - [x] Negative first-income remainder skips with neutral copy.
+- [ ] Rule wizard closed without confirming: nothing is written, and Inicio shows Regla pendiente until the rule runs, the user taps Ahora no, or the next payday arrives.
 - [x] Second income cannot fund 20% + 5,000: offer reduced amounts.
 - [x] Card payment larger than the bank: warn, offer a bucket transfer.
 - [x] Forgotten cash: quick add plus a weekly reconcile prompt.
@@ -675,13 +717,21 @@ These are requirements, not later nice-to-haves. Cover them in the phase that ow
 - [ ] Qty missing on a grocery line: keep the spend on the expense, omit unit price from the chart.
 - [ ] Mixed units on one item: separate series.
 - [ ] Refund of a grocery line: lower the expense total, do not plot it as a cheaper price.
+- [ ] Weekly bill with two unpaid occurrences in one cycle: both reserve, both show on Próximos 14 días, and registering one leaves the other pending.
+- [ ] Payday every 2 weeks lands three times in one month: the projection counts three, and the monthly equivalent stays amount × 26 ÷ 12.
+- [ ] Bill every 2 months on day 31: clamps to the last day of short months and keeps counting months from `start_date`.
+- [ ] Repeat changed with an overdue occurrence: ask before letting it go. Disponible real never jumps silently.
+- [ ] Occurrence adjusted, then paid a different amount: the movement keeps what was typed, the override stops reserving, and nothing asks to reconcile.
+- [ ] Occurrence adjusted to 0 and later charged anyway: registering it still works, with the amount typed.
 - [ ] Missed loan installment: mark it late, keep it in the next cycle’s reserve, and use neutral copy.
 - [ ] Installment larger than a cycle’s income: warn on the timeline, and offer a bucket transfer or a scenario with an extra payment later.
 - [ ] Mover between apartados that live in different accounts (one in GBM, one in bank or another Ahorro account) moves only the apartados, not the account money. Pair it with a transfer or limit it to the same account.
 - [ ] Changing an account's type after creation (bank or cash ↔ Ahorro o inversión), with the Disponible real change before confirm.
 - [ ] Lender changes the rate or schedule: edit the remaining schedule only. Paid rows never change.
 - [ ] Loan paid early: status becomes `paid`, the remaining scheduled rows are removed after confirm, and the timeline updates.
-- [ ] Money lent is never repaid: the user can write it off. It never touched Disponible real, so nothing moves.
+- [ ] Money lent is never repaid: the user can write it off (**Dar por perdido**). The money already left with the disbursement, so no balance changes.
+- [ ] Lent money repaid in part, then written off: the collected income stays, and only the unpaid rows stop showing.
+- [ ] Lent loan saved without the disbursement (“Ya lo registré”): no second expense is written, and each **Registrar cobro** still adds income.
 
 ---
 

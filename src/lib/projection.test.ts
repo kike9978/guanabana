@@ -39,6 +39,7 @@ function data(extra: Partial<MoneyData> = {}): MoneyData {
     categories: [],
     transactions: [],
     recurring: [item('q1', 'income', 15, 20000), item('q2', 'income', 30, 20000), item('rent', 'bill', 1, 8000)],
+    overrides: [],
     loans: [],
     installments: [],
     buckets: [],

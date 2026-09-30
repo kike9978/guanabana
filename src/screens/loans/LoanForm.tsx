@@ -3,7 +3,7 @@ import { AmountField, ChoiceField, FieldError, FieldNote, FormActions, SelectFie
 import { isLiquid, selectable } from '../../db/accounts'
 import { createLoan } from '../../db/commitments'
 import type { IncomeSlot, LoanDirection, LoanFrequency, LoanInterest } from '../../db/types'
-import { incomeSlots, slotDays } from '../../lib/incomeRules'
+import { monthlyIncomeSlots, slotDays } from '../../lib/incomeRules'
 import type { MoneyData } from '../../db/useMoneyData'
 import { isoToDate, todayIso } from '../../lib/dates'
 import { formatDate, formatMoney } from '../../lib/format'
@@ -84,7 +84,7 @@ export function LoanForm({ data, onDone }: { data: MoneyData; onDone: () => void
   }
   const scheduleKey = JSON.stringify(scheduleInput)
   const activeOverrides = overrides.key === scheduleKey ? overrides.rows : {}
-  const paydays = incomeSlots(data.recurring)
+  const paydays = monthlyIncomeSlots(data.recurring)
   const slotOptions: { value: IncomeSlot; label: string }[] = [
     ...(paydays[0] ? [{ value: 'first' as const, label: paydays.length > 1 ? `1er ingreso · día ${paydays[0].due_day}` : `Mi ingreso · día ${paydays[0].due_day}` }] : []),
     ...(paydays[1] ? [{ value: 'second' as const, label: `2º ingreso · día ${paydays[1].due_day}` }, { value: 'both' as const, label: 'Cada ingreso' }] : []),

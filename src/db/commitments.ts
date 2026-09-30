@@ -1,7 +1,7 @@
 import { planExtraPayment, type ExtraMode, type ScheduleRow } from '../lib/loans'
 import { newRecord, writeAcross } from './db'
 import { draftTransaction, recordWithInstallments } from './ledger'
-import type { Loan, LoanInstallment, RecurringItem, Transaction } from './types'
+import type { Loan, LoanInstallment, RecurringItem, RecurringOverride, Transaction } from './types'
 
 type RecurringFields = Omit<RecurringItem, 'uuid' | 'updated_at'>
 
@@ -9,13 +9,29 @@ export async function createRecurring(fields: RecurringFields): Promise<void> {
   await writeAcross([{ store: 'recurring_items', put: [newRecord<RecurringItem>(fields)] }])
 }
 
-export async function updateRecurring(item: RecurringItem, fields: Partial<RecurringFields>): Promise<void> {
+export async function updateRecurring(item: RecurringItem, fields: Partial<RecurringFields>, dropOverrides: string[] = []): Promise<void> {
   const updated: RecurringItem = { ...item, ...fields, updated_at: new Date().toISOString() }
-  await writeAcross([{ store: 'recurring_items', put: [updated] }])
+  await writeAcross([
+    { store: 'recurring_items', put: [updated] },
+    { store: 'recurring_overrides', delete: dropOverrides },
+  ])
 }
 
-export async function deleteRecurring(item: RecurringItem): Promise<void> {
-  await writeAcross([{ store: 'recurring_items', delete: [item.uuid] }])
+export async function deleteRecurring(item: RecurringItem, overrides: RecurringOverride[]): Promise<void> {
+  await writeAcross([
+    { store: 'recurring_items', delete: [item.uuid] },
+    { store: 'recurring_overrides', delete: overrides.filter((row) => row.recurring_id === item.uuid).map((row) => row.uuid) },
+  ])
+}
+
+/** One override per occurrence: an existing row is updated in place. */
+export async function setOverride(existing: RecurringOverride | undefined, fields: Omit<RecurringOverride, 'uuid' | 'updated_at'>): Promise<void> {
+  const row = existing ? { ...existing, amount: fields.amount, updated_at: new Date().toISOString() } : newRecord<RecurringOverride>(fields)
+  await writeAcross([{ store: 'recurring_overrides', put: [row] }])
+}
+
+export async function removeOverride(existing: RecurringOverride): Promise<void> {
+  await writeAcross([{ store: 'recurring_overrides', delete: [existing.uuid] }])
 }
 
 export async function createLoan(

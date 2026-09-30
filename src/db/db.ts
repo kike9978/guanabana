@@ -13,6 +13,7 @@ export const STORES = [
   'savings_buckets',
   'bucket_moves',
   'recurring_items',
+  'recurring_overrides',
   'budgets',
   'settings',
   'projection_scenarios',
@@ -23,7 +24,7 @@ export const STORES = [
 export type StoreName = (typeof STORES)[number]
 
 const DB_NAME = 'guanabana'
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 let dbPromise: Promise<IDBDatabase> | null = null
 

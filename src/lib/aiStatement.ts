@@ -1,4 +1,6 @@
 import type { Account, RecurringItem, Transaction } from '../db/types'
+import { itemOccurrences } from './cycle'
+import { isoToDate } from './dates'
 import { normalizeName } from './priceBook'
 import { roundMoney } from './money'
 import { AiParseError, asNumber, asString, dateTooFar, isoDate, readEnvelope, readFieldConfidence, type FieldConfidence } from './aiEnvelope'
@@ -56,9 +58,10 @@ export function classifyRow(
   const exact = sameDay.some((tx) => sameText(row.description, tx.notes))
   const bill = recurring.find((item) => {
     if (!item.active || item.type !== 'bill' || row.direction !== 'out') return false
-    const day = Number(row.date.slice(8, 10))
-    const apart = Math.abs(day - item.due_day)
-    const nearDay = Math.min(apart, 31 - apart) <= 2
+    const day = isoToDate(row.date)
+    const from = new Date(day.getFullYear(), day.getMonth(), day.getDate() - 2, 12)
+    const to = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 3, 12)
+    const nearDay = itemOccurrences(item, from, to).length > 0
     const nearAmount = item.amount === null || item.amount === row.amount
     return nearDay && nearAmount && sameText(row.description, item.name)
   })

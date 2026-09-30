@@ -48,6 +48,7 @@ function data(): MoneyData {
     categories: [],
     transactions: [],
     recurring: [payday('q1', 15), payday('q2', 30)],
+    overrides: [],
     loans: [loan],
     installments,
     buckets: [],

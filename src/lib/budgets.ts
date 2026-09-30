@@ -1,7 +1,7 @@
 import type { Budget, Category, RecurringItem, Transaction } from '../db/types'
 import type { Tone } from '../components/hud'
 import { childrenOf, isTopLevel, topCategoryId } from './categories'
-import { occurrencesBetween } from './cycle'
+import { itemOccurrences, occurrencesPerYear } from './cycle'
 import { roundMoney } from './money'
 
 export function monthKey(date: Date): string {
@@ -49,13 +49,22 @@ export interface ExpectedIncome {
   unknownItems: number
 }
 
+/** An average month of scheduled income: a weekly payday counts 52 ÷ 12 times, not the Fridays of this month. */
+export function scheduledMonthlyIncome(recurring: RecurringItem[]): number {
+  return roundMoney(
+    recurring
+      .filter((item) => item.active && item.type === 'income' && item.amount !== null)
+      .reduce((sum, item) => sum + (item.amount ?? 0) * (occurrencesPerYear(item) / 12), 0),
+  )
+}
+
 export function expectedIncome(recurring: RecurringItem[], transactions: Transaction[], month: string): ExpectedIncome {
   const { from, to } = monthBounds(month)
   const items = recurring.filter((item) => item.active && item.type === 'income')
   const scheduled = roundMoney(
     items
       .filter((item) => item.amount !== null)
-      .reduce((sum, item) => sum + (item.amount ?? 0) * occurrencesBetween(item.due_day, from, to).length, 0),
+      .reduce((sum, item) => sum + (item.amount ?? 0) * itemOccurrences(item, from, to).length, 0),
   )
   const unknownItems = items.filter((item) => item.amount === null).length
   if (scheduled > 0) return { amount: scheduled, source: 'schedule', unknownItems }

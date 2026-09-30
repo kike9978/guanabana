@@ -10,6 +10,7 @@ import type {
   LoanInstallment,
   Place,
   RecurringItem,
+  RecurringOverride,
   SavingsBucket,
   Settings,
   Transaction,
@@ -30,6 +31,7 @@ export interface MoneyData {
   categories: Category[]
   transactions: Transaction[]
   recurring: RecurringItem[]
+  overrides: RecurringOverride[]
   loans: Loan[]
   installments: LoanInstallment[]
   buckets: SavingsBucket[]
@@ -47,6 +49,7 @@ export function useMoneyData(): MoneyData {
   const categories = useRecords<Category>('categories')
   const transactions = useRecords<Transaction>('transactions')
   const recurring = useRecords<RecurringItem>('recurring_items')
+  const overrides = useRecords<RecurringOverride>('recurring_overrides')
   const loans = useRecords<Loan>('loans')
   const installments = useRecords<LoanInstallment>('loan_installments')
   const buckets = useRecords<SavingsBucket>('savings_buckets')
@@ -58,7 +61,7 @@ export function useMoneyData(): MoneyData {
   const places = useRecords<Place>('places')
 
   return {
-    loaded: [accounts, cards, categories, transactions, recurring, loans, installments, buckets, bucketMoves, budgets, settings, lines, items, places].every(
+    loaded: [accounts, cards, categories, transactions, recurring, overrides, loans, installments, buckets, bucketMoves, budgets, settings, lines, items, places].every(
       (rows) => rows !== null,
     ),
     lines: lines ?? [],
@@ -71,6 +74,7 @@ export function useMoneyData(): MoneyData {
     ),
     transactions: transactions ?? [],
     recurring: recurring ?? [],
+    overrides: overrides ?? [],
     loans: loans ?? [],
     installments: installments ?? [],
     buckets: [...(buckets ?? [])].sort(compareBuckets),

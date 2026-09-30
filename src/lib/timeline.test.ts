@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Loan, LoanInstallment, RecurringItem, Transaction } from '../db/types'
+import type { Loan, LoanInstallment, RecurringItem, RecurringOverride, Transaction } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
 import { timeline } from './timeline'
 
@@ -30,7 +30,7 @@ const installment: LoanInstallment = {
   status: 'scheduled',
 }
 
-function data(transactions: Transaction[] = []): MoneyData {
+function data(transactions: Transaction[] = [], overrides: RecurringOverride[] = []): MoneyData {
   return {
     loaded: true,
     accounts: [],
@@ -38,6 +38,7 @@ function data(transactions: Transaction[] = []): MoneyData {
     categories: [],
     transactions,
     recurring: [rent],
+    overrides,
     loans: [loan],
     installments: [installment],
     buckets: [],
@@ -71,6 +72,14 @@ describe('timeline', () => {
       { loan_installment_id: 'car-1' },
     ] as Transaction[]
     expect(timeline(data(paid), ...october).every((event) => event.paid)).toBe(true)
+  })
+
+  test('an adjusted occurrence shows and prefills its own amount', () => {
+    const override: RecurringOverride = { ...base, uuid: 'o', recurring_id: 'rent', occurrence: '2026-10-01', amount: 9100 }
+    const [event] = timeline(data([], [override]), ...october)
+    expect(event.amount).toBe(9100)
+    expect(event.action?.prefill.amount).toBe(9100)
+    expect(event.bill?.override).toBe(override)
   })
 
   test('the end date is exclusive', () => {

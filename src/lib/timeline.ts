@@ -1,6 +1,7 @@
 import type { AddPrefill, AddType } from '../app/navigation'
+import type { RecurringItem, RecurringOverride } from '../db/types'
 import type { MoneyData } from '../db/useMoneyData'
-import { occurrencesBetween } from './cycle'
+import { itemOccurrences, overrideIndex } from './cycle'
 import { dateToIso, daysBetween, isoToDate } from './dates'
 import { paidInstallmentIds } from './loans'
 import { nextPayments } from './statement'
@@ -16,6 +17,8 @@ export interface TimelineEvent {
   kind: TimelineKind
   paid: boolean
   action?: { type: AddType; prefill: AddPrefill }
+  /** Bills only: the item behind the event, so one occurrence can be adjusted. */
+  bill?: { item: RecurringItem; occurrence: string; override?: RecurringOverride }
 }
 
 export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[] {
@@ -29,22 +32,26 @@ export function timeline(data: MoneyData, from: Date, to: Date): TimelineEvent[]
     if (event.date < to) events.push({ ...event, paid: false })
   }
 
+  const adjusted = overrideIndex(data.overrides)
   for (const item of data.recurring.filter((r) => r.active)) {
-    for (const date of occurrencesBetween(item.due_day, from, to)) {
+    for (const date of itemOccurrences(item, from, to)) {
       const occurrence = dateToIso(date)
       if (occurrence < item.start_date) continue
       const isBill = item.type === 'bill'
+      const override = isBill ? adjusted.get(`${item.uuid}|${occurrence}`) : undefined
+      const amount = override?.amount ?? item.amount
       events.push({
         key: `${item.uuid}-${occurrence}`,
         date,
         label: item.name,
-        amount: item.amount,
+        amount,
         kind: isBill ? 'bill' : 'income',
         paid: recordedOccurrences.has(`${item.uuid}|${occurrence}`),
+        ...(isBill ? { bill: { item, occurrence, override } } : {}),
         action: {
           type: isBill ? 'expense' : 'income',
           prefill: {
-            amount: item.amount ?? undefined,
+            amount: amount ?? undefined,
             account_id: item.account_id,
             cc_id: isBill ? (item.cc_id ?? null) : null,
             category_id: item.category_id,
